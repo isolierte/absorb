@@ -2639,6 +2639,19 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
 
   // ── Rolling auto-download ──
 
+  /// Whether a progress entry shows real listening. A reset keeps the row:
+  /// Absorb's own reset writes it back with progress 0, position 0, hidden
+  /// from Continue Listening and the newest lastUpdate, so picking anchors
+  /// by lastUpdate alone let an accidentally played then reset episode drag
+  /// a whole show's rolling window to the newest episodes.
+  static bool _hasListened(Map<String, dynamic>? progress) {
+    if (progress == null) return false;
+    if (progress['hideFromContinueListening'] == true) return false;
+    final fraction = (progress['progress'] as num?)?.toDouble() ?? 0;
+    final currentTime = (progress['currentTime'] as num?)?.toDouble() ?? 0;
+    return fraction > 0 || currentTime > 0;
+  }
+
   void _catchUpRollingDownloads() async {
     if (_api == null || isOffline || _rollingDownloadSeries.isEmpty) return;
 
@@ -2658,6 +2671,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         final key = entry.key;
         final data = entry.value;
         if (data['isFinished'] == true) continue;
+        if (!_hasListened(data)) continue;
         final lastUpdate = data['lastUpdate'] as num? ?? 0;
 
         if (key.length > 36 && key.substring(0, 36) == seriesOrShowId) {
@@ -2909,7 +2923,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         if (progress?['isFinished'] == true) continue;
         firstUnfinishedKey ??= key;
         final lastUpdate = progress?['lastUpdate'] as num? ?? 0;
-        if (progress != null && lastUpdate > latestUpdate) {
+        if (_hasListened(progress) && lastUpdate > latestUpdate) {
           latestUpdate = lastUpdate;
           latestKey = key;
         }
