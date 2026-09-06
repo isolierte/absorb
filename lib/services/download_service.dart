@@ -2450,11 +2450,19 @@ class DownloadService extends ChangeNotifier {
     final info = _downloads[itemId];
     if (info == null) return;
 
-    // Stop playback if this item is currently playing to avoid crashes
+    // Stop playback if this item is currently playing to avoid crashes. An
+    // episode key has to match the playing episode, not just its show:
+    // matching on the show alone stopped whatever was playing whenever
+    // another episode of the same podcast was deleted.
     if (!skipStopCheck) {
       final player = AudioPlayerService();
-      if (player.currentItemId == itemId ||
-          (itemId.length > 36 && player.currentItemId == itemId.substring(0, 36))) {
+      final playingId = player.currentItemId;
+      final playingKey = playingId == null
+          ? null
+          : player.currentEpisodeId == null
+              ? playingId
+              : '$playingId-${player.currentEpisodeId}';
+      if (playingKey == itemId) {
         await player.stop();
       }
     }
