@@ -272,11 +272,11 @@ class _GridBookTileState extends State<GridBookTile> {
               fontSize: 11 * coverGridTextScale(context),
             ),
           ),
-          // Subtitle. Keeps its line even when empty so the author rows
-          // stay level across a row of tiles.
-          if (widget.showSubtitle)
+          // Subtitle. A book without one hands the line to the author instead
+          // of leaving a gap under the title.
+          if (widget.showSubtitle && subtitle.isNotEmpty)
             Text(
-              subtitle.isEmpty ? ' ' : subtitle,
+              subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: tt.labelSmall?.copyWith(

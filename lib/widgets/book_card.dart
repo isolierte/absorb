@@ -422,13 +422,13 @@ class BookCard extends StatelessWidget {
             ),
           ),
         ),
-        // Subtitle. Keeps its line even when empty so the author lines stay
-        // level across a shelf.
-        if (showSubtitle)
+        // Subtitle. A book without one hands the line to the author instead
+        // of leaving a gap under the title.
+        if (showSubtitle && subtitle.isNotEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 2),
             child: Text(
-              subtitle.isEmpty ? ' ' : subtitle,
+              subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: tt.labelSmall?.copyWith(
