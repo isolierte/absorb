@@ -122,6 +122,24 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
   /// enough that a headset press hours after the drive is taken at face value.
   static const _carClientWindow = Duration(hours: 2);
 
+  /// Whether another app is playing on the music stream right now. A media
+  /// key that reaches us while we are paused and something else is audible
+  /// was meant for that something else - an earbud's wear detection pausing
+  /// a video, say. Android routes keys to the last media session, and video
+  /// apps often have none, so it lands here; playing on top of the video is
+  /// the last thing the user wants. Unknown reads as nothing playing.
+  static Future<bool> _otherAudioActive() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final active = await AndroidAudioManager().isMusicActive();
+      debugPrint('[Handler] other audio active=$active');
+      return active;
+    } catch (e) {
+      debugPrint('[Handler] isMusicActive failed: $e');
+      return false;
+    }
+  }
+
   /// Whether a car client has touched the media browse tree recently, per the
   /// Java-side stamp. The MEDIA_PAUSE-while-paused phantom (GH #243) only
   /// exists on Android Auto, so this is what decides whether the click
@@ -895,6 +913,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
                 debugPrint(
                   '[Handler] -> single press (MEDIA_PAUSE while paused) -> no-op (suppressed phantom toggle to PLAY, car client seen)',
                 );
+              } else if (await _otherAudioActive()) {
+                debugPrint(
+                  '[Handler] -> single press (MEDIA_PAUSE while paused, other audio active) -> no-op',
+                );
               } else {
                 // Some BT headsets (Shokz seen in the wild) send MEDIA_PAUSE
                 // for a play press when their idea of our state went stale.
@@ -917,6 +939,10 @@ class AudioPlayerHandler extends BaseAudioHandler with SeekHandler {
             } else if (_player.playing) {
               debugPrint('[Handler] → single press → PAUSE');
               await pause();
+            } else if (await _otherAudioActive()) {
+              debugPrint(
+                '[Handler] -> single press while paused, other audio active -> no-op',
+              );
             } else {
               debugPrint('[Handler] → single press → PLAY');
               await play();
