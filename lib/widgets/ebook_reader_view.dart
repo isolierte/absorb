@@ -86,6 +86,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
   bool _loading = true;
   String? _error;
   File? _cachedFile;
+  String? _cachedLocations;
   // Swiping to the recents/app-switcher un-hides the system bars. The frozen
   // safe-area padding (see _buildViewerArea) keeps that from resizing the
   // WebView, but if a resize still gets through (some OEMs resize the window
@@ -712,9 +713,15 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
           'cached=${await isEbookCached(widget.itemId, widget.ebookFile)} playing=$playing');
       final file = await fetchEbookToCache(api, widget.itemId, widget.ebookFile, widget.title);
       final len = file.existsSync() ? await file.length() : 0;
-      debugPrint('[EbookReader] file ready item=${widget.itemId} bytes=$len path=${file.path}');
+      final locations = await loadCachedLocations(file);
+      debugPrint('[EbookReader] file ready item=${widget.itemId} bytes=$len '
+          'locations=${locations == null ? 'none' : 'cached'} path=${file.path}');
       if (mounted) {
-        setState(() { _cachedFile = file; _loading = false; });
+        setState(() {
+          _cachedFile = file;
+          _cachedLocations = locations;
+          _loading = false;
+        });
       }
     } catch (e) {
       debugPrint('[EbookReader] Error: $e');
@@ -3529,6 +3536,12 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
               epubSource: EpubSource.fromFile(_cachedFile!),
               epubController: _epubController!,
               initialCfi: _initialCfi,
+              cachedLocations: _cachedLocations,
+              onLocationsGenerated: (json) {
+                debugPrint('[EbookReader] locations generated item=${widget.itemId} chars=${json.length}');
+                final file = _cachedFile;
+                if (file != null) saveCachedLocations(file, json);
+              },
               displaySettings: EpubDisplaySettings(
                 flow: EpubFlow.paginated,
                 spread: _spread,

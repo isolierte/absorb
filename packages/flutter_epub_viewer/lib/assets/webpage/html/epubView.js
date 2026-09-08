@@ -5,6 +5,19 @@ var chapters = []
 var clearSelectionOnPageChange = true; // Global flag for selection clearing behavior
 var selectAnnotationRange = false; // Global flag for programmatically selecting annotation ranges
 var initialXPathProcessed = false; // Flag to prevent processing initialXPath multiple times
+// Location index from an earlier open of this file, handed in by the app
+// before loadBook so the page can skip walking the whole book again.
+var cachedLocations = null;
+function setCachedLocations(json) {
+  cachedLocations = json;
+}
+function handBackLocations() {
+  try {
+    window.flutter_inappwebview.callHandler('locationsGenerated', book.locations.save());
+  } catch (e) {
+    console.error('Error handing locations back:', e);
+  }
+}
 var xpathDisplayInProgress = false; // Flag to prevent multiple XPath displays
 var initialPositionLoading = false; // Flag to track if initial position is being loaded
 // Global selection state tracking (needed for blocking navigation when selection is active)
@@ -87,6 +100,12 @@ var bookParts = [];
 var lastRenderOpts = null;
 var lastTheme = {bg: null, fg: null, css: null, fontSize: null};
 var bookPartsLen = 0;
+// A loopback URL the page fetches the book from itself; set by Flutter for
+// file sources right before loadBook(null, ...).
+var bookUrl = null;
+function setBookUrl(url) {
+  bookUrl = url;
+}
 function beginBookData() {
   bookParts = [];
   bookPartsLen = 0;
@@ -111,21 +130,27 @@ function loadBook(data, cfi, initialXPath, manager, flow, spread, snap, allowScr
   selectAnnotationRange = selectAnnotationRangeParam !== undefined ? selectAnnotationRangeParam : false;
   var viewportHeight = window.innerHeight;
   document.getElementById('viewer').style.height = viewportHeight;
-  var uint8Array;
-  if (data) {
-    uint8Array = new Uint8Array(data);
+  if (bookUrl) {
+    var url = bookUrl;
+    bookUrl = null;
+    book.open(url);
   } else {
-    uint8Array = new Uint8Array(bookPartsLen);
-    var off = 0;
-    for (var p = 0; p < bookParts.length; p++) {
-      uint8Array.set(bookParts[p], off);
-      off += bookParts[p].length;
-      bookParts[p] = null; // let each chunk collect while assembling
+    var uint8Array;
+    if (data) {
+      uint8Array = new Uint8Array(data);
+    } else {
+      uint8Array = new Uint8Array(bookPartsLen);
+      var off = 0;
+      for (var p = 0; p < bookParts.length; p++) {
+        uint8Array.set(bookParts[p], off);
+        off += bookParts[p].length;
+        bookParts[p] = null; // let each chunk collect while assembling
+      }
+      bookParts = [];
+      bookPartsLen = 0;
     }
-    bookParts = [];
-    bookPartsLen = 0;
+    book.open(uint8Array,)
   }
-  book.open(uint8Array,)
   lastRenderOpts = {
     manager: manager,
     flow: flow,
@@ -1102,7 +1127,27 @@ function loadBook(data, cfi, initialXPath, manager, flow, spread, snap, allowScr
   })
 
   book.ready.then(function () {
-    book.locations.generate(1600).then(() => {
+    // Walking every section to build the location index is the heaviest
+    // thing the reader does, and it ran on every open - minutes of a pegged
+    // core on a big book, with the first page waiting on it. The app keeps
+    // the result next to the cached epub: load that when there is one, and
+    // only generate (and hand the result back) when there isn't.
+    var locationsReady;
+    if (cachedLocations) {
+      var cached = cachedLocations;
+      cachedLocations = null;
+      locationsReady = Promise.resolve().then(function () {
+        try {
+          book.locations.load(cached);
+        } catch (e) {
+          console.error('Cached locations unusable, regenerating:', e);
+          return book.locations.generate(1600).then(handBackLocations);
+        }
+      });
+    } else {
+      locationsReady = book.locations.generate(1600).then(handBackLocations);
+    }
+    locationsReady.then(() => {
       // Handle initial position after locations are generated
       // XPath takes precedence over CFI
       if (initialXPath && !initialXPathProcessed) {
