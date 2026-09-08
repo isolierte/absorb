@@ -2626,6 +2626,38 @@ function blindPageIdOf(r) {
   return null;
 }
 
+// The page the live rendition is showing within its chapter, read off the
+// manager's geometry the same way the blind is placed. The reported
+// location is one page behind at every chapter boundary: the previous view
+// still touches the container's edge with zero width, the location mapping
+// picks it up, and the new chapter's first page reports as the old one's
+// last while its second page reports as page 1. Pages count columns like
+// epub.js does, so a spread advances by two.
+function readerPageInfo() {
+  try {
+    var m = rendition.manager;
+    var c = m.container.getBoundingClientRect();
+    var rtl = m.settings && m.settings.direction === "rtl";
+    var probe = rtl ? c.right - 1 : c.left + 1;
+    var views = m.views.all();
+    for (var i = 0; i < views.length; i++) {
+      var v = views[i];
+      if (!v || !v.element || !v.section) continue;
+      var b = v.element.getBoundingClientRect();
+      if (b.left <= probe && b.right > probe) {
+        var delta = m.layout.delta || b.width || 1;
+        var pageWidth = m.layout.pageWidth || delta;
+        var divisor = m.layout.divisor || 1;
+        var into = rtl ? b.right - probe : probe - b.left;
+        var total = Math.max(1, Math.ceil(b.width / delta) * divisor);
+        var page = Math.min(total, Math.floor(into / pageWidth) + 1);
+        return { page: page, total: total, href: v.section.href || '', index: v.section.index };
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
 // 1 = the blind is past the live page, 0 = same page, -1 = behind it,
 // null = one of them has nothing laid out yet.
 function blindPageCmp() {

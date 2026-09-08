@@ -853,13 +853,15 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
       source: '''
         (function() {
           rendition.on('relocated', function(location) {
-            if (location && location.start && location.start.displayed) {
-              window.flutter_inappwebview.callHandler('pageInfo', {
+            var info = (typeof readerPageInfo === 'function') ? readerPageInfo() : null;
+            if (!info && location && location.start && location.start.displayed) {
+              info = {
                 page: location.start.displayed.page,
                 total: location.start.displayed.total,
                 href: location.start.href || ''
-              });
+              };
             }
+            if (info) window.flutter_inappwebview.callHandler('pageInfo', info);
           });
         })();
       ''',
@@ -3065,6 +3067,12 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
           if (loc.start.displayed) {
             out.page = loc.start.displayed.page;
             out.total = loc.start.displayed.total;
+          }
+          var info = (typeof readerPageInfo === 'function') ? readerPageInfo() : null;
+          if (info) {
+            out.page = info.page;
+            out.total = info.total;
+            out.href = info.href || out.href;
           }
           out.percentage = (typeof loc.start.percentage === 'number') ? loc.start.percentage : null;
           if ((out.percentage == null || out.percentage === 0) && book.locations && loc.start.cfi) {
