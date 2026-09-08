@@ -9662,11 +9662,17 @@ abstract class AppLocalizations {
   /// **'Loading...'**
   String get statsScreenLoading;
 
-  /// No description provided for @statsScreenJumpToSessionStart.
+  /// No description provided for @statsScreenJumpToStart.
   ///
   /// In en, this message translates to:
-  /// **'Jump to session start ({position})'**
-  String statsScreenJumpToSessionStart(String position);
+  /// **'Jump to start'**
+  String get statsScreenJumpToStart;
+
+  /// No description provided for @statsScreenJumpToEnd.
+  ///
+  /// In en, this message translates to:
+  /// **'Jump to end'**
+  String get statsScreenJumpToEnd;
 
   /// No description provided for @statsScreenPlayMethodDirect.
   ///
