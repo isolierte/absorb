@@ -42,6 +42,15 @@ on:
         required: false
         type: boolean
         default: false
+      app_store_notes:
+        description: "App Store What's New for the review submission (optional, used with app_store_submit)"
+        required: false
+        type: string
+      app_store_submit:
+        description: "Submit the build for App Store review; release stays manual, press Release in App Store Connect after approval"
+        required: false
+        type: boolean
+        default: false
 
 # Every job that touches the release needs write access to Releases.
 permissions:
@@ -375,6 +384,34 @@ jobs:
             echo "  + Beta group: $BETA_GROUP"
             ARGS+=(--beta-group "$BETA_GROUP")
           fi
+          app-store-connect publish "${ARGS[@]}"
+
+      # App Store review submission, opt-in. Creates or reuses the App Store
+      # version matching pubspec, attaches What's New, and submits the
+      # processed build for review. Release type is MANUAL so nothing goes
+      # live on its own: after approval you press Release in App Store
+      # Connect. Best-effort like the TestFlight step, it waits on Apple's
+      # processing and can time out even when the upload itself worked.
+      - name: Submit to App Store review (best-effort)
+        if: inputs.app_store_submit
+        continue-on-error: true
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_IDENTIFIER: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          APP_STORE_NOTES: ${{ inputs.app_store_notes }}
+          RAW_VERSION: ${{ needs.prepare.outputs.raw }}
+        run: |
+          IPA_PATH=$(ls build/ios/ipa/*.ipa | head -1)
+          VERSION_STRING="${RAW_VERSION%%+*}"
+          ARGS=(--path "$IPA_PATH" --skip-package-upload --app-store
+                --release-type MANUAL --version-string "$VERSION_STRING"
+                --max-build-processing-wait 40)
+          if [ -n "$APP_STORE_NOTES" ]; then
+            echo "  + What's New ($(printf '%s' "$APP_STORE_NOTES" | wc -c) chars)"
+            ARGS+=(--whats-new "$APP_STORE_NOTES" --locale en-US)
+          fi
+          echo "  + Submitting $VERSION_STRING for App Store review (manual release)"
           app-store-connect publish "${ARGS[@]}"
 
   # Single Discord ping once both halves finish, success or fail.
