@@ -1140,7 +1140,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         final localReachable = await ApiService.pingServer(
           auth.localServerUrl,
           customHeaders: auth.customHeaders,
-        ).timeout(const Duration(seconds: 3), onTimeout: () => false);
+        ).timeout(const Duration(seconds: 6), onTimeout: () => false);
         if (localReachable) {
           debugPrint('[Library] Local server ping succeeded — going online');
           await auth.checkLocalServer();
@@ -1230,10 +1230,14 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       return;
     }
 
-    final reachable = await ApiService.pingServer(
+    final probe = await ApiService.pingServerDetailed(
       auth.localServerUrl,
       customHeaders: auth.customHeaders,
-    ).timeout(const Duration(seconds: 3), onTimeout: () => false);
+    ).timeout(
+      const Duration(seconds: 6),
+      onTimeout: () => (ok: false, detail: 'no answer within 6s'),
+    );
+    final reachable = probe.ok;
 
     if (auth.useLocalServer) {
       if (reachable) {
@@ -1242,11 +1246,11 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       } else {
         _localProbeFailures++;
         if (_localProbeFailures >= _localProbeFailuresToFlip) {
-          debugPrint('[Library] Local probe failed ${_localProbeFailures}x — switching to remote');
+          debugPrint('[Library] Local probe failed ${_localProbeFailures}x — switching to remote (${probe.detail})');
           auth.clearLocalOverride();
           _localProbeFailures = 0;
         } else {
-          debugPrint('[Library] Local probe miss $_localProbeFailures/$_localProbeFailuresToFlip');
+          debugPrint('[Library] Local probe miss $_localProbeFailures/$_localProbeFailuresToFlip (${probe.detail})');
         }
       }
     } else if (reachable) {
@@ -1254,6 +1258,8 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       await auth.checkLocalServer();
       _localLastReachableAt = DateTime.now();
       _localProbeFailures = 0;
+    } else {
+      debugPrint('[Library] Local probe miss while on remote (${probe.detail})');
     }
   }
 
