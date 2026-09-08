@@ -1910,6 +1910,22 @@ class ApiService {
     required double currentTime,
     required double duration,
     int timeListened = 60,
+  }) async =>
+      await syncPlaybackSessionStatus(
+        sessionId,
+        currentTime: currentTime,
+        duration: duration,
+        timeListened: timeListened,
+      ) ==
+      200;
+
+  /// The sync's status code, or null when the request itself failed. A 404
+  /// means the server no longer has the session; anything else is transient.
+  Future<int?> syncPlaybackSessionStatus(
+    String sessionId, {
+    required double currentTime,
+    required double duration,
+    int timeListened = 60,
   }) async {
     try {
       final response = await _authPost(
@@ -1923,9 +1939,9 @@ class ApiService {
           'duration': duration,
         }),
         timeout: const Duration(seconds: 10));
-      return response.statusCode == 200;
+      return response.statusCode;
     } catch (_) {
-      return false;
+      return null;
     }
   }
 

@@ -5798,8 +5798,15 @@ class AudioPlayerService extends ChangeNotifier {
                         '$_playbackSessionId',
                       );
                       // The playing source still points at the OLD session's
-                      // URLs; adopt this one at the next pause/seek.
+                      // URLs. Adopt this one at the next pause/seek, unless
+                      // that old session is already gone: then the stream
+                      // dies with the cache, so move it now.
                       _stashSessionUpgrade(sessionData);
+                      if (_sourceSessionDead) {
+                        await _applyPendingSessionUpgrade(
+                          resumeAfter: _player?.playing ?? false,
+                        );
+                      }
                     }
                   }
                 } catch (e) {
@@ -6328,12 +6335,13 @@ class AudioPlayerService extends ChangeNotifier {
     debugPrint(
       '[Player] Sync session ${_playbackSessionId!.substring(0, 8)}... | currentTime=${ct.toStringAsFixed(1)}s, timeListened=${elapsed}s, volume=$vol, eqSession=$eqSid',
     );
-    final ok = await _api!.syncPlaybackSession(
+    final status = await _api!.syncPlaybackSessionStatus(
       _playbackSessionId!,
       currentTime: ct,
       duration: _totalDuration,
       timeListened: elapsed,
     );
+    final ok = status == 200;
     if (ok && elapsed > 0) {
       // Tick the StatsWidget forward locally so "today" stays fresh between
       // 15-min authoritative refreshes (which Android Doze throttles).
@@ -6348,10 +6356,30 @@ class AudioPlayerService extends ChangeNotifier {
       _logEvent(PlaybackEventType.syncServer, detail: '+${elapsed}s');
     }
     if (!ok && !_syncRecoveryInProgress) {
+      // Starting a new session makes the server close this one, and the
+      // live source may stream through it. A failure that isn't "session
+      // gone" is network trouble: keep the session, push progress through
+      // the progress endpoint, and try the session again next tick.
+      final sessionGone = status == 404;
+      if (!sessionGone && _sourceSessionId == _playbackSessionId) {
+        debugPrint(
+          '[Player] Session sync failed (status=$status) - keeping the session the stream runs on, syncing progress directly',
+        );
+        await _syncProgressWithoutSession(pos);
+        return;
+      }
       debugPrint('[Player] Session sync failed - attempting recovery');
       _syncRecoveryInProgress = true;
       try {
         await _recoverSession(ct, elapsed);
+        // A gone session was the one the stream ran on: the source is dead
+        // already, and moving it now costs a short gap instead of the five
+        // seconds of silence when the cache runs out and the retry kicks in.
+        if (_sourceSessionDead) {
+          await _applyPendingSessionUpgrade(
+            resumeAfter: _player?.playing ?? false,
+          );
+        }
       } finally {
         _syncRecoveryInProgress = false;
       }
@@ -6511,6 +6539,13 @@ class AudioPlayerService extends ChangeNotifier {
         // stays until a manual stop and the book is never marked finished.
         _setupSync();
       }
+    }
+    // A source streaming through a session the server no longer has (closed
+    // by the pause timeout, or replaced since) would play from the cache
+    // until that runs out, then die with a 404 and a five-second retry.
+    // Nothing is audible yet, so this is the moment to move it.
+    if (_sourceSessionDead) {
+      await _rebuildSourceOnDeadSession(resumeAfter: false);
     }
     // A seek while paused (user, or the socket adopting another device's
     // position) is the position the user expects to hear next - don't let
@@ -6737,6 +6772,90 @@ class AudioPlayerService extends ChangeNotifier {
     } catch (e) {
       debugPrint('[Player] Resume server-check (pre-start) failed: $e');
       return false;
+    }
+  }
+
+  /// The server session the playing source streams through, read off its
+  /// URLs. Null for tokened item URLs and local files.
+  String? get _sourceSessionId {
+    if (_activeStreamUrls.isEmpty) return null;
+    final m = RegExp(r'/public/session/([^/]+)/')
+        .firstMatch(_activeStreamUrls.first);
+    return m?.group(1);
+  }
+
+  /// A session URL stops working the moment the server closes the session:
+  /// its public track route serves open sessions only, and Audiobookshelf
+  /// closes any other open session from the same device when a new one
+  /// starts. So a source is dead once its session is no longer the one we
+  /// hold - closed by the pause timeout, or replaced. Playback carries on
+  /// from the cache until that runs out, then a 404 and a five-second retry.
+  bool get _sourceSessionDead {
+    if (_localSessionMode) return false;
+    final sid = _sourceSessionId;
+    return sid != null && sid != _playbackSessionId;
+  }
+
+  /// Move a source that streams through a dead session onto a live one.
+  /// Starts a session when we hold none; a held one is adopted through the
+  /// pending upgrade. Returns whether the source was rebuilt.
+  Future<bool> _rebuildSourceOnDeadSession({required bool resumeAfter}) async {
+    if (_api == null || _currentItemId == null || _localSessionMode) {
+      return false;
+    }
+    if (_isOfflineMode || _knownOffline || ChromecastService().isCasting) {
+      return false;
+    }
+    final manualOffline =
+        (_prefs ?? await SharedPreferences.getInstance()).getBool(
+          'manual_offline_mode',
+        ) ??
+        false;
+    if (manualOffline) return false;
+    final pending = _pendingSessionUpgrade;
+    if (pending == null || pending['id'] != _playbackSessionId) {
+      if (_recreatingSession) return false;
+      _recreatingSession = true;
+      try {
+        final sessionData = _currentEpisodeId != null
+            ? await _api!.startEpisodePlaybackSession(
+                _currentItemId!,
+                _currentEpisodeId!,
+              )
+            : await _api!.startPlaybackSession(_currentItemId!);
+        if (sessionData == null) return false;
+        _playbackSessionId = sessionData['id'] as String?;
+        _logEvent(PlaybackEventType.sessionStart, detail: 'dead source');
+        _stashSessionUpgrade(sessionData);
+      } catch (e) {
+        debugPrint('[Player] Session start for a dead source failed: $e');
+        return false;
+      } finally {
+        _recreatingSession = false;
+      }
+    }
+    final swapped = await _applyPendingSessionUpgrade(resumeAfter: resumeAfter);
+    debugPrint(
+      '[Player] Source was on a closed session - '
+      '${swapped ? 'rebuilt on ${_playbackSessionId?.substring(0, 8)}' : 'rebuild failed, keeping it'}',
+    );
+    return swapped;
+  }
+
+  /// Progress-endpoint sync for a tick whose session sync could not be used.
+  Future<void> _syncProgressWithoutSession(Duration pos) async {
+    if (_api == null || _currentItemId == null) return;
+    final key = _currentEpisodeId != null
+        ? '$_currentItemId-$_currentEpisodeId'
+        : _currentItemId!;
+    try {
+      await _saveProgressLocal(pos);
+      final ok = await _progressSync.syncToServer(api: _api!, itemId: key);
+      debugPrint(
+        '[Player] Direct progress sync ${ok ? 'succeeded' : 'returned false'}',
+      );
+    } catch (e) {
+      debugPrint('[Player] Direct progress sync error: $e');
     }
   }
 
