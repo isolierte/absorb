@@ -406,7 +406,7 @@ jobs:
           VERSION_STRING="${RAW_VERSION%%+*}"
           ARGS=(--path "$IPA_PATH" --skip-package-upload --app-store
                 --release-type MANUAL --version-string "$VERSION_STRING"
-                --max-build-processing-wait 40)
+                --max-find-build-wait 40 --max-build-processing-wait 40)
           if [ -n "$APP_STORE_NOTES" ]; then
             echo "  + What's New ($(printf '%s' "$APP_STORE_NOTES" | wc -c) chars)"
             ARGS+=(--whats-new "$APP_STORE_NOTES" --locale en-US)
