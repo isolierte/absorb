@@ -2812,9 +2812,14 @@ class ApiService {
     return [];
   }
 
-  /// Fetch Audible rating from Audnexus API using ASIN.
-  /// Returns { rating, asin } or null.
+  /// Audible rating for an ASIN: the score and how many ratings it rests on.
+  /// Audible's own catalog answers both, on the store matching the device
+  /// locale like every other Audible lookup here. Audnexus stays as the
+  /// fallback; it knows the score but not the count.
+  /// Returns { rating, count, asin } or null.
   static Future<Map<String, dynamic>?> getAudibleRating(String asin) async {
+    final catalog = await _audibleCatalogRating(asin);
+    if (catalog != null) return catalog;
     try {
       final response = await http.get(
         Uri.parse('https://api.audnex.us/books/$asin?region=$_region&update=1'),
@@ -2826,6 +2831,7 @@ class ApiService {
         if (rating != null) {
           return {
             'rating': double.tryParse(rating) ?? 0.0,
+            'count': null,
             'asin': asin,
           };
         }
@@ -2834,6 +2840,35 @@ class ApiService {
       // ignore — Audnexus is optional
     }
     return null;
+  }
+
+  static Future<Map<String, dynamic>?> _audibleCatalogRating(String asin) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          'https://api.audible$_audibleTld/1.0/catalog/products/'
+          '${Uri.encodeComponent(asin)}?response_groups=rating',
+        ),
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final product = data['product'] as Map<String, dynamic>?;
+      final overall = (product?['rating'] as Map<String, dynamic>?)
+          ?['overall_distribution'] as Map<String, dynamic>?;
+      final score = (overall?['average_rating'] as num?)?.toDouble();
+      final count = (overall?['num_ratings'] as num?)?.toInt();
+      if (score == null || !score.isFinite || score <= 0 || score > 5) {
+        return null;
+      }
+      return {
+        'rating': score,
+        'count': count != null && count >= 0 ? count : null,
+        'asin': asin,
+      };
+    } catch (e) {
+      debugPrint('[API] Audible catalog rating $asin error: $e');
+      return null;
+    }
   }
 
   /// Read a previously-fetched Audible rating from local cache, keyed by
@@ -2850,6 +2885,7 @@ class ApiService {
       if (rating == null || rating <= 0) return null;
       return {
         'rating': rating,
+        'count': (data['count'] as num?)?.toInt(),
         'asin': data['asin'] as String?,
       };
     } catch (_) {
@@ -2860,12 +2896,13 @@ class ApiService {
   /// Persist a fresh Audible rating so subsequent book detail opens render
   /// the stars instantly without waiting on Audnexus.
   static Future<void> setCachedAudibleRating(
-      String itemId, double rating, String? asin) async {
+      String itemId, double rating, String? asin, {int? count}) async {
     if (rating <= 0) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('audible_rating_$itemId', jsonEncode({
         'rating': rating,
+        'count': count,
         'asin': asin,
         'fetchedAt': DateTime.now().millisecondsSinceEpoch,
       }));

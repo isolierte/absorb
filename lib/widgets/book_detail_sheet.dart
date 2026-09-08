@@ -17,6 +17,7 @@ import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:intl/intl.dart';
 import '../l10n/app_localizations.dart';
 import 'book_stats_sheet.dart';
 import '../services/wording.dart';
@@ -345,7 +346,8 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
               _asin = freshAsin;
             });
             await ApiService.setCachedAudibleRating(
-                widget.itemId, freshRating, freshAsin);
+                widget.itemId, freshRating, freshAsin,
+                count: (rating['count'] as num?)?.toInt());
           }
           return;
         }
@@ -645,6 +647,11 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
                 const SizedBox(width: 6),
                 Text((_rating!['rating'] as num).toStringAsFixed(1),
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
+                if (((_rating!['count'] as num?) ?? 0) > 0) ...[
+                  const SizedBox(width: 3),
+                  Text('(${_formatRatingCount((_rating!['count'] as num).toInt(), l.localeName)})',
+                    style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+                ],
                 const SizedBox(width: 4),
                 Text(l.onAudible, style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
               ]),
@@ -1629,6 +1636,14 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
       'BR': 'audible.com.br',
     };
     return domains[code] ?? 'audible.com';
+  }
+
+  static String _formatRatingCount(int count, String locale) {
+    try {
+      return NumberFormat.decimalPattern(locale).format(count);
+    } catch (_) {
+      return NumberFormat.decimalPattern().format(count);
+    }
   }
 
   void _showAudibleReviews(BuildContext context) {
