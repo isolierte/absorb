@@ -28,6 +28,20 @@ on:
         required: false
         type: string
         default: ""
+      play_notes:
+        description: "Play Store release notes (optional, 500 chars max), attached to the Play release"
+        required: false
+        type: string
+      play_track:
+        description: "Play track (internal, alpha, beta, or a closed track's name; default internal)"
+        required: false
+        type: string
+        default: ""
+      play_release:
+        description: "Release on the Play track so its testers get it, instead of leaving a draft"
+        required: false
+        type: boolean
+        default: false
 
 # Every job that touches the release needs write access to Releases.
 permissions:
@@ -204,17 +218,39 @@ jobs:
             gh release upload "$VERSION_TAG" "$ARTIFACT" --clobber
           fi
 
-      # Park the AAB in Play Console as an internal-track DRAFT (nothing
-      # submitted or rolled out). Skips silently if the secret isn't set.
-      - name: Upload AAB to Play Console (internal, draft)
+      # Play Store release notes go in as a whatsnew-<locale> file. Google
+      # rejects anything over 500 characters, so fail here with a clear count
+      # rather than deep inside the upload.
+      - name: Write Play Store release notes
+        if: matrix.flavor == 'playstore' && inputs.play_notes != ''
+        env:
+          PLAY_NOTES: ${{ inputs.play_notes }}
+        run: |
+          LEN=$(printf '%s' "$PLAY_NOTES" | wc -m)
+          if [ "$LEN" -gt 500 ]; then
+            echo "Play Store notes are $LEN characters, the limit is 500"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/whatsnew"
+          printf '%s' "$PLAY_NOTES" > "$RUNNER_TEMP/whatsnew/whatsnew-en-US"
+          echo "PLAY_WHATSNEW=$RUNNER_TEMP/whatsnew" >> "$GITHUB_ENV"
+          echo "Play Store notes: $LEN characters"
+
+      # Park the AAB in Play Console. By default it lands as a DRAFT on the
+      # internal track (nothing submitted or rolled out); with play_release the
+      # release completes on the chosen track, which is what hands it to that
+      # track's testers. Testers belong to the track in Play Console, not to
+      # the upload. Skips silently if the secret isn't set.
+      - name: Upload AAB to Play Console
         if: matrix.flavor == 'playstore' && env.PLAY_SERVICE_ACCOUNT_JSON != ''
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: com.barnabas.absorb
           releaseFiles: ${{ env.ARTIFACT }}
-          track: internal
-          status: draft
+          track: ${{ inputs.play_track || 'internal' }}
+          status: ${{ inputs.play_release && 'completed' || 'draft' }}
+          whatsNewDirectory: ${{ env.PLAY_WHATSNEW }}
 
   # iOS must build on macOS; runs in parallel with the Android jobs above.
   ios:
