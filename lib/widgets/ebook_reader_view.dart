@@ -3600,8 +3600,13 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
                       shape: const RoundedRectangleBorder(
                         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                       ),
+                      // The sheet sits on the app surface, not the page, so
+                      // it keeps the theme accent.
                       builder: (_) => CardSpeedSheet(
-                        player: player, accent: accent, itemId: widget.itemId),
+                        player: player,
+                        accent: Theme.of(context).colorScheme.primary,
+                        itemId: widget.itemId,
+                      ),
                     ),
                     child: Text(_speedLabel(player.speed),
                         style: TextStyle(color: fg, fontWeight: FontWeight.w700)),
@@ -3649,6 +3654,19 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     );
   }
 
+  /// The accent as drawn on the page. E-ink builds are monochrome, so the
+  /// theme accent is black and vanishes on the dark and grey looks; the
+  /// page's own text colour stands in whenever the accent would not contrast
+  /// with the page behind it.
+  Color _accentOn(Color bg, Color fg, Color accent) {
+    if (PlayerSettings.einkMode) return fg;
+    final la = accent.computeLuminance();
+    final lb = bg.computeLuminance();
+    final hi = la > lb ? la : lb;
+    final lo = la > lb ? lb : la;
+    return (hi + 0.05) / (lo + 0.05) < 2.0 ? fg : accent;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -3656,7 +3674,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     final bg = palette.bgColor;
     final fg = palette.fgColor;
     final fgDim = fg.withValues(alpha: 0.6);
-    final accent = cs.primary;
+    final accent = _accentOn(bg, fg, cs.primary);
 
     // Hold the heavy WebView until the open animation finishes — mounting it
     // mid-transition (e.g. for an already-cached book) stutters the slide-in.
