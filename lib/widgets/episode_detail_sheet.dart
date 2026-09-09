@@ -805,15 +805,16 @@ class _EpisodeDetailSheetState extends State<EpisodeDetailSheet> {
     }
 
     final compoundKey = '$_itemId-$_episodeId';
+    final progressId = context
+        .read<LibraryProvider>()
+        .getEpisodeProgressData(_itemId, _episodeId)?['id'] as String?;
     await ProgressSyncService().deleteLocal(compoundKey);
-    final ok = await api.deleteEpisodeProgress(_itemId, _episodeId);
-    // Mark as unfinished with zero progress on the server
-    await api.updateEpisodeProgress(
-      _itemId, _episodeId,
-      currentTime: 0,
-      duration: _duration,
-      isFinished: false,
-    );
+    // Deleting the record is what the web UI does. Fall back to zeroing it in
+    // place when there is no record id to delete or the delete is refused.
+    var ok = progressId != null && await api.deleteMediaProgress(progressId);
+    if (!ok) {
+      ok = await api.zeroEpisodeProgress(_itemId, _episodeId, duration: _duration);
+    }
 
     if (context.mounted) {
       context.read<LibraryProvider>().resetProgressFor(compoundKey);

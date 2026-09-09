@@ -2367,7 +2367,13 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     await ProgressSyncService().deleteLocal(widget.itemId);
     
     // Reset server progress (PATCH to zero + hide from continue listening)
-    final serverSuccess = await api.resetProgress(widget.itemId, duration);
+    String? progressId;
+    if (context.mounted) {
+      final data = context.read<LibraryProvider>().getProgressData(widget.itemId);
+      progressId = data?['id'] as String?;
+    }
+    final serverSuccess =
+        await api.resetProgress(widget.itemId, duration, progressId: progressId);
     
     // Clear from library provider (mark as reset — forces 0 progress)
     if (context.mounted) context.read<LibraryProvider>().resetProgressFor(widget.itemId);

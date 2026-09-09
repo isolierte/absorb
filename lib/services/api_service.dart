@@ -2246,8 +2246,10 @@ class ApiService {
     );
   }
 
-  /// Reset progress to zero.
-  Future<bool> resetProgress(String itemId, double duration) async {
+  /// Reset progress to zero. [progressId] is the server's progress record id
+  /// when one is known; the delete route only accepts that.
+  Future<bool> resetProgress(String itemId, double duration,
+      {String? progressId}) async {
     try {
       final progressPath = itemId.length > 36
           ? '${itemId.substring(0, 36)}/${itemId.substring(37)}'
@@ -2256,10 +2258,7 @@ class ApiService {
       final apiItemId = isCompound ? itemId.substring(0, 36) : itemId;
       final episodeId = isCompound ? itemId.substring(37) : null;
 
-      // DELETE progress entry
-      await _authDelete(
-        Uri.parse('$_cleanBaseUrl/api/me/progress/$progressPath'),
-        timeout: const Duration(seconds: 10));
+      if (progressId != null) await deleteMediaProgress(progressId);
 
       // Start session at 0 and close — forces server to update position
       final sessionData = await startPlaybackSession(apiItemId, episodeId: episodeId);
@@ -2404,15 +2403,47 @@ class ApiService {
     }
   }
 
-  /// DELETE /api/me/progress/:itemId/:episodeId
-  Future<bool> deleteEpisodeProgress(String itemId, String episodeId) async {
+  /// DELETE /api/me/progress/:progressId
+  /// The server's delete route takes the progress record's own id (from the
+  /// user's mediaProgress list), not the item or episode id.
+  Future<bool> deleteMediaProgress(String progressId) async {
     try {
       final resp = await _authDelete(
-        Uri.parse('$_cleanBaseUrl/api/me/progress/$itemId/$episodeId'),
+        Uri.parse('$_cleanBaseUrl/api/me/progress/$progressId'),
         timeout: const Duration(seconds: 10));
+      debugPrint('[API] deleteMediaProgress $progressId: ${resp.statusCode}');
       return resp.statusCode >= 200 && resp.statusCode < 300;
     } catch (e) {
-      debugPrint('[API] deleteEpisodeProgress error: $e');
+      debugPrint('[API] deleteMediaProgress error: $e');
+      return false;
+    }
+  }
+
+  /// Zero an episode's progress in place when there is no record id to delete.
+  /// ABS ignores `progress` in a PATCH that also carries `isFinished`, and only
+  /// zeroes an in-progress record when `isFinished` is absent, so this goes in
+  /// two steps: clear the finished flag, then write the zero position.
+  Future<bool> zeroEpisodeProgress(
+    String itemId,
+    String episodeId, {
+    required double duration,
+  }) async {
+    try {
+      final url = Uri.parse('$_cleanBaseUrl/api/me/progress/$itemId/$episodeId');
+      final unfinish = await _authPatch(url,
+          body: jsonEncode({'isFinished': false}),
+          timeout: const Duration(seconds: 10));
+      final zero = await _authPatch(url,
+          body: jsonEncode({
+            'currentTime': 0,
+            'duration': duration,
+            'progress': 0,
+          }),
+          timeout: const Duration(seconds: 10));
+      debugPrint('[API] zeroEpisodeProgress: unfinish=${unfinish.statusCode} zero=${zero.statusCode}');
+      return unfinish.statusCode == 200 && zero.statusCode == 200;
+    } catch (e) {
+      debugPrint('[API] zeroEpisodeProgress error: $e');
       return false;
     }
   }
