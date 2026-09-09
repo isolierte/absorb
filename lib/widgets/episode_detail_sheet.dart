@@ -242,7 +242,7 @@ class _EpisodeDetailSheetState extends State<EpisodeDetailSheet> {
           ),
         );
         if (confirmed != true) return;
-        // Un-finish — keep current position
+        // Un-finish. The server clears the position to 0, same as the web UI.
         await api.updateEpisodeProgress(
           _itemId, _episodeId,
           currentTime: currentTime,

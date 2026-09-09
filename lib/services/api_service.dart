@@ -2195,8 +2195,9 @@ class ApiService {
   /// only writes the percent it shows (`progress`) when `isFinished` is
   /// absent; a body carrying `isFinished: false` on an unfinished record moves
   /// currentTime and nothing else, so the web UI percent never budges. Pass
-  /// false only to deliberately un-finish: that goes out as its own PATCH
-  /// first, because the server zeroes currentTime on that flip.
+  /// false only to deliberately un-finish: the server answers that by
+  /// clearing the position to 0, same as the web UI's "mark as not finished",
+  /// so [currentTime] is not sent in that case.
   Future<void> updateProgress(
     String itemId, {
     required double currentTime,
@@ -2213,6 +2214,7 @@ class ApiService {
             body: jsonEncode({'isFinished': false}),
             timeout: const Duration(seconds: 10));
         debugPrint('[API] updateProgress unfinish $progressPath: ${unfinish.statusCode}');
+        return;
       }
       final body = jsonEncode({
         'currentTime': currentTime,
@@ -2427,7 +2429,7 @@ class ApiService {
   /// PATCH /api/me/progress/:itemId/:episodeId
   /// Same [isFinished] contract as [updateProgress]: null leaves the flag out
   /// so the server writes the percent, true marks finished, false un-finishes
-  /// in a separate PATCH first and then writes the position.
+  /// and lets the server clear the position to 0.
   Future<void> updateEpisodeProgress(
     String itemId,
     String episodeId, {
@@ -2442,6 +2444,7 @@ class ApiService {
             body: jsonEncode({'isFinished': false}),
             timeout: const Duration(seconds: 10));
         debugPrint('[API] updateEpisodeProgress unfinish $episodeId: ${unfinish.statusCode}');
+        return;
       }
       final resp = await _authPatch(url,
         body: jsonEncode({
