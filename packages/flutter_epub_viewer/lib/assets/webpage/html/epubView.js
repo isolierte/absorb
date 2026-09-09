@@ -2316,6 +2316,47 @@ function blindHeight() {
   return window.innerHeight || document.documentElement.clientHeight || 0;
 }
 
+// A two-column spread is read left column top to bottom, then right column,
+// so the blind travels column by column: the next spread's left column rolls
+// down over the left one first, then its right column over the right. One
+// full-width blind covered the top of the right column while the eye was
+// still halfway down the left, and the reader lost the start of it.
+function blindColumns() {
+  try {
+    var d = rendition && rendition.manager && rendition.manager.layout &&
+      rendition.manager.layout.divisor;
+    return d === 2 ? 2 : 1;
+  } catch (e) { return 1; }
+}
+
+function blindTravel() {
+  return blindHeight() * blindColumns();
+}
+
+function blindIsRtl() {
+  try {
+    var m = rendition && rendition.manager;
+    return !!(m && m.settings && m.settings.direction === "rtl");
+  } catch (e) { return false; }
+}
+
+// Clip for the blind host: the revealed part of the next page. Single column
+// is the top y px. Two columns reveal the first-read column down to y, then
+// keep it whole while the second column comes down.
+function blindClip(y, h, cols, rtl) {
+  if (cols < 2) return "inset(0px 0px " + (h - y) + "px 0px)";
+  if (y < h) {
+    var y1 = Math.max(0, y) + "px";
+    return rtl
+      ? "polygon(50% 0, 100% 0, 100% " + y1 + ", 50% " + y1 + ")"
+      : "polygon(0 0, 50% 0, 50% " + y1 + ", 0 " + y1 + ")";
+  }
+  var y2 = Math.max(0, Math.min(h, y - h)) + "px";
+  return rtl
+    ? "polygon(0 0, 100% 0, 100% 100%, 50% 100%, 50% " + y2 + ", 0 " + y2 + ")"
+    : "polygon(0 0, 100% 0, 100% " + y2 + ", 50% " + y2 + ", 50% 100%, 0 100%)";
+}
+
 // The blind has to occupy the live viewer's exact box. #viewer sits in a
 // centred flex body with margins, so a full-screen blind paginates at a
 // different width and its "next page" is not the live rendition's next page.
@@ -2357,19 +2398,27 @@ function blindApply() {
   var host = document.getElementById("viewerNext");
   if (!host) return;
   var h = blindHeight();
-  var y = Math.max(0, Math.min(h, blindY));
-  host.style.clipPath = "inset(0px 0px " + (h - y) + "px 0px)";
-  host.style.webkitClipPath = "inset(0px 0px " + (h - y) + "px 0px)";
+  var cols = blindColumns();
+  var rtl = blindIsRtl();
+  var y = Math.max(0, Math.min(h * cols, blindY));
+  var clip = blindClip(y, h, cols, rtl);
+  host.style.clipPath = clip;
+  host.style.webkitClipPath = clip;
   var line = document.getElementById("blindLine");
   if (line) {
-    if (y <= 0.5 || y >= h - 0.5) {
+    // Where the edge sits within the column it is crossing.
+    var firstCol = cols < 2 || y < h;
+    var colY = firstCol ? y : y - h;
+    if (colY <= 0.5 || colY >= h - 0.5) {
       line.style.display = "none";
     } else {
       var box = host.getBoundingClientRect();
+      var colW = cols < 2 ? box.width : box.width / 2;
+      var onLeft = cols < 2 || (rtl ? !firstCol : firstCol);
       line.style.display = "block";
-      line.style.left = box.left + "px";
-      line.style.width = box.width + "px";
-      line.style.top = (box.top + y) + "px";
+      line.style.left = (onLeft ? box.left : box.left + colW) + "px";
+      line.style.width = colW + "px";
+      line.style.top = (box.top + colY) + "px";
       // Frozen white while paused, so the stopped edge is unmistakable.
       line.style.height = blindPaused ? "3px" : "2px";
       line.style.background = blindLineColor(blindPaused);
@@ -2469,7 +2518,8 @@ function blindLayoutSummary(r) {
       " viewW=" + Math.round(w) + " pages=" + c.pages +
       " scrollL=" + Math.round(m.container.scrollLeft) +
       " scrollW=" + m.container.scrollWidth +
-      " delta=" + m.layout.delta + " W=" + m.layout.width + " H=" + m.layout.height;
+      " delta=" + m.layout.delta + " W=" + m.layout.width + " H=" + m.layout.height +
+      " cols=" + (m.layout.divisor || 1);
   } catch (err) {
     return "layout err " + err;
   }
@@ -2818,7 +2868,7 @@ function blindTick(ts) {
   if (dt > 0.25) dt = 0;
   if (!blindPaused && !blindTouchHold && !blindSwapping) {
     blindY += blindSpeed * dt;
-    var h = blindHeight();
+    var h = blindTravel();
     if (blindY >= h) {
       blindY = h;
       blindApply();
