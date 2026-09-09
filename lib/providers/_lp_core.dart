@@ -432,6 +432,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       unawaited(_auth?.ensureUserInfoLoaded() ?? Future.value());
       if (_api != null) {
         debugPrint('[Library] Back online — flushing pending syncs');
+        AudioPlayerService().resetServerSyncBackoff();
         ProgressSyncService().flushPendingSync(api: _api!);
         ProgressSyncService().flushOfflineListeningTime(api: _api!);
         LocalSessionService().flushPending(api: _api!);

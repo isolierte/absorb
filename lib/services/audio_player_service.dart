@@ -3317,7 +3317,7 @@ class AudioPlayerService extends ChangeNotifier {
       '[ClickDebug] App foregrounded: sincePrevPauseMs=$sincePrevPauseMs, '
       'sincePrevPlayMs=$sincePrevPlayMs, aaDisconnectSuspect=$aaDisconnectSuspect',
     );
-    service._positionSyncFailures = 0; // retry on foreground
+    service.resetServerSyncBackoff();
     if (Platform.isIOS && service._iosResyncPending) {
       unawaited(service._iosForegroundResyncIfNeeded());
     }
@@ -5493,6 +5493,7 @@ class AudioPlayerService extends ChangeNotifier {
     _lastAccrualPos = null;
     _positionSyncInProgress = false;
     _positionSyncFailures = 0;
+    _noSessionSyncRetryAt = null;
     // Cache prefs in background - not needed synchronously here
     if (_prefs == null) {
       SharedPreferences.getInstance().then((p) => _prefs = p);
@@ -5844,9 +5845,12 @@ class AudioPlayerService extends ChangeNotifier {
 
               // Back off when the server is unreachable to avoid hammering
               // every sync interval with requests that will just timeout.
-              if (_positionSyncFailures >= 3) {
-                // Skip server sync - will retry after connectivity change
-                // or app foreground resets the counter.
+              // The pause is timed and grows with each failure, so a bad
+              // minute during a WiFi-to-cellular handover doesn't leave the
+              // server stale for the rest of the listen.
+              if (_positionSyncFailures >= 3 &&
+                  _noSessionSyncRetryAt != null &&
+                  DateTime.now().isBefore(_noSessionSyncRetryAt!)) {
                 _lastServerSync = DateTime.now();
               } else if (manualOffline) {
                 // Manual offline - local save only, no server sync
@@ -5868,17 +5872,12 @@ class AudioPlayerService extends ChangeNotifier {
                   if (ok) {
                     debugPrint('[Player] No-session sync succeeded');
                     _positionSyncFailures = 0;
+                    _noSessionSyncRetryAt = null;
                   } else {
-                    _positionSyncFailures++;
-                    debugPrint(
-                      '[Player] No-session sync returned false (failures=$_positionSyncFailures)',
-                    );
+                    _noteNoSessionSyncFailure('returned false');
                   }
                 } catch (e) {
-                  _positionSyncFailures++;
-                  debugPrint(
-                    '[Player] No-session sync error (failures=$_positionSyncFailures): $e',
-                  );
+                  _noteNoSessionSyncFailure('error: $e');
                 }
               }
             } finally {
@@ -6243,7 +6242,33 @@ class AudioPlayerService extends ChangeNotifier {
   bool _syncRecoveryInProgress = false;
   bool _positionSyncInProgress = false;
   int _positionSyncFailures = 0;
+  DateTime? _noSessionSyncRetryAt;
   bool _recreatingSession = false;
+
+  void _noteNoSessionSyncFailure(String what) {
+    _positionSyncFailures++;
+    if (_positionSyncFailures >= 3) {
+      final waitSec = (60 << (_positionSyncFailures - 3)).clamp(60, 300);
+      _noSessionSyncRetryAt = DateTime.now().add(Duration(seconds: waitSec));
+      debugPrint(
+        '[Player] No-session sync $what (failures=$_positionSyncFailures), '
+        'backing off ${waitSec}s',
+      );
+    } else {
+      debugPrint(
+        '[Player] No-session sync $what (failures=$_positionSyncFailures)',
+      );
+    }
+  }
+
+  /// Forget any sync backoff so the next tick pushes progress right away.
+  /// Called when the network comes back or the active server changes.
+  void resetServerSyncBackoff() {
+    if (_positionSyncFailures == 0 && _noSessionSyncRetryAt == null) return;
+    debugPrint('[Player] Sync backoff cleared (failures=$_positionSyncFailures)');
+    _positionSyncFailures = 0;
+    _noSessionSyncRetryAt = null;
+  }
   int _playbackGeneration = 0;
   int? _cachedStartReconcileGeneration;
 
