@@ -14949,6 +14949,18 @@ abstract class AppLocalizations {
   /// **'Finding this spot in the audiobook...'**
   String get findInAudiobookSearching;
 
+  /// No description provided for @findInAudiobookStillSearching.
+  ///
+  /// In en, this message translates to:
+  /// **'Still searching the audio for this spot...'**
+  String get findInAudiobookStillSearching;
+
+  /// No description provided for @findInAudiobookSearchingLong.
+  ///
+  /// In en, this message translates to:
+  /// **'Long chapter, still searching. This can take a minute or two...'**
+  String get findInAudiobookSearchingLong;
+
   /// No description provided for @findInAudiobookNotFound.
   ///
   /// In en, this message translates to:

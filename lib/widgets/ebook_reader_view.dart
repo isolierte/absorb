@@ -2350,15 +2350,19 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     return false;
   }
 
-  // Find in audiobook: how much audio each probe transcribes, and how many
-  // estimate-correct-retry rounds to attempt before giving up.
+  // Find in audiobook: how much audio each probe transcribes, how many
+  // estimate-correct-retry rounds the main anchor gets, and the ceiling once
+  // the fallback candidates (player position, book percentage, neighbouring
+  // chapters) have taken two rounds each. A probe is roughly ten seconds.
   static const double _probeWindowSeconds = 30.0;
-  static const int _maxProbes = 4;
+  static const int _maxProbes = 5;
+  static const int _maxTotalProbes = 12;
   // Narration pace measured on real books: ~0.07-0.08 s per character. Used
   // when no audio chapter anchors the estimate, and to reject absurd
   // chapter-derived rates (3-second "chapters" exist in the wild).
   static const double _fallbackSecPerChar = 0.075;
-  // How far a failed probe shifts the search around the original estimate.
+  // How far a failed probe shifts the search around the original estimate,
+  // at minimum; a long section widens it so the probes spread across it.
   static const double _scanStepSeconds = 90.0;
 
   /// Reverse of Find in ebook: locate the selected text in the audio and start
@@ -2430,13 +2434,24 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     await PlayerSettings.setFindInAudiobookGoToPlayer(goToPlayer);
     if (!mounted) return;
 
-    showProgressDialog(context, l.findInAudiobookSearching);
+    final status = ValueNotifier<String>(l.findInAudiobookSearching);
+    showProgressDialogListenable(context, status);
+    // A long chapter can take a dozen ten-second probes; say so rather than
+    // spin in silence.
+    final slowTimer = Timer(const Duration(seconds: 10), () {
+      status.value = l.findInAudiobookStillSearching;
+    });
+    final longTimer = Timer(const Duration(seconds: 35), () {
+      status.value = l.findInAudiobookSearchingLong;
+    });
     double? targetTime;
     try {
       targetTime = await _locateAudioForSelection(cfi, selText);
     } catch (e) {
       debugPrint('[FindAudio] failed: $e');
     }
+    slowTimer.cancel();
+    longTimer.cancel();
     if (!mounted) return;
     Navigator.pop(context); // progress dialog
     if (targetTime == null) {
@@ -2528,12 +2543,59 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
 
     double lo, hi, rate;
     double est;
+    var anchorRate = double.nan;
     if (audioCh != null) {
       final a = _chapterAnchorEstimate(audioCh, offset, total, bookEnd);
       lo = a.lo;
       hi = a.hi;
       rate = a.rate;
       est = a.est;
+      final chStart = (audioCh['start'] as num?)?.toDouble() ?? 0;
+      final chEnd = (audioCh['end'] as num?)?.toDouble() ?? bookEnd;
+      anchorRate = (chEnd - chStart) / total;
+      if (anchorRate > 0.2 && chEnd.isFinite) {
+        // One audio chapter covering several ebook sections (a whole part
+        // with no chapter markers): pace through the text of the sections
+        // before this one under the same TOC entry, and take the rate from
+        // the run as a whole rather than this section alone.
+        final hrefs = await _spineHrefs();
+        var first = si;
+        while (first > 0 &&
+            first > si - 12 &&
+            first - 1 < hrefs.length &&
+            _chapterForHref(hrefs[first - 1]) == tocTitle) {
+          first--;
+        }
+        var last = si;
+        while (last + 1 < hrefs.length &&
+            last < si + 12 &&
+            (_chapterForHref(hrefs[last + 1]) ?? tocTitle) == tocTitle) {
+          last++;
+        }
+        final counts = await _sectionCharCounts(first, last);
+        if (counts.length == last - first + 1) {
+          double before = 0, run = 0;
+          for (var i = 0; i < counts.length; i++) {
+            final n = first + i == si ? total : counts[i];
+            run += n;
+            if (first + i < si) before += n;
+          }
+          final runRate = run > 0 ? (chEnd - chStart) / run : double.nan;
+          rate = (runRate >= 0.03 && runRate <= 0.2)
+              ? runRate
+              : _fallbackSecPerChar;
+          est = (chStart + (before + offset) * rate).clamp(chStart, chEnd);
+          lo = chStart;
+          hi = chEnd;
+          debugPrint('[FindAudio] anchor spans sections $first-$last '
+              '(${run.toInt()} chars, ${before.toInt()} before this one) '
+              'rate=${rate.toStringAsFixed(4)} est=${est.toStringAsFixed(1)}');
+        }
+      }
+      // A marker that sits a little late (the part's interlude narrated under
+      // the previous chapter) puts the passage just before the anchor, where
+      // a scan clamped at the chapter start can never look.
+      lo = (lo - 900).clamp(0.0, lo);
       debugPrint('[FindAudio] si=$si target@${offset.toInt()}/${total.toInt()} '
           'toc="$tocTitle" audioCh="${audioCh['title']}" '
           '${lo.toStringAsFixed(0)}-${hi.isFinite ? hi.toStringAsFixed(0) : '?'}s '
@@ -2594,34 +2656,129 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     }
     if (hi.isInfinite) hi = est + 3600;
 
-    final t = await _probeForTarget(
-      si: si,
-      offset: offset,
-      estimate: est,
-      lo: lo,
-      hi: hi,
-      rate: rate,
-      duration: audio.duration,
-      maxProbes: _maxProbes,
-    );
-    if (t != null) return t;
-    if (audioChAlt == null) return null;
+    // The section's narration length sets how far apart the probes spread:
+    // 90s steps suit a short section, a 40-minute chapter wants them wider so
+    // five probes cover it instead of one corner.
+    final scanStep = (total * rate / 4).clamp(_scanStepSeconds, 300.0);
+    final dur = audio.duration;
+    final probed = <double>[est];
+    var probesLeft = _maxTotalProbes;
 
-    // The picked anchor never matched; the same title elsewhere in the book
-    // might be the right one. Two probes on the runner-up before giving up.
-    final alt = _chapterAnchorEstimate(audioChAlt, offset, total, bookEnd);
-    debugPrint('[FindAudio] retrying on runner-up "${audioChAlt['title']}" '
-        'est=${alt.est.toStringAsFixed(1)}');
-    return _probeForTarget(
-      si: si,
-      offset: offset,
-      estimate: alt.est,
-      lo: alt.lo,
-      hi: alt.hi.isFinite ? alt.hi : alt.est + 3600,
-      rate: alt.rate,
-      duration: audio.duration,
-      maxProbes: 2,
-    );
+    Future<double?> run(String label, double e, double from, double to,
+        double pace, int rounds) async {
+      if (probesLeft <= 0) return null;
+      final n = rounds < probesLeft ? rounds : probesLeft;
+      probesLeft -= n;
+      debugPrint('[FindAudio] $label est=${e.toStringAsFixed(1)} '
+          'window ${from.toStringAsFixed(0)}-${to.toStringAsFixed(0)}s '
+          'rounds=$n');
+      return _probeForTarget(
+        si: si,
+        offset: offset,
+        estimate: e,
+        lo: from,
+        hi: to,
+        rate: pace,
+        duration: dur,
+        maxProbes: n,
+        scanStepSeconds: scanStep,
+      );
+    }
+
+    final t = await run('anchor', est, lo, hi, rate, _maxProbes);
+    if (t != null) return t;
+
+    // The anchor never matched. Fallback candidates, most likely first, two
+    // rounds each.
+    final extras =
+        <({String label, double est, double lo, double hi, double rate})>[];
+    final top = dur > 0 ? dur : double.infinity;
+    final pctEst = (pct != null && pct > 0 && dur > 0)
+        ? (pct * dur).clamp(0.0, dur)
+        : null;
+
+    // Where the audio is parked right now. People mostly look up the passage
+    // they just heard, so a player position near the estimate or the book
+    // percentage is the best lead there is.
+    final player = AudioPlayerService();
+    if (player.currentItemId == widget.itemId) {
+      final now = player.position.inMilliseconds / 1000.0;
+      final near = (now - est).abs() <= 1800 ||
+          (pctEst != null && (now - pctEst).abs() <= 1800);
+      if (near) {
+        extras.add((
+          label: 'player position',
+          est: now,
+          lo: (now - 900).clamp(0.0, now),
+          hi: (now + 900).clamp(now, top),
+          rate: _fallbackSecPerChar,
+        ));
+      }
+    }
+    // The whole-book percentage disagreeing with the anchor by more than a
+    // few minutes usually means the anchor is the wrong chapter.
+    if (pctEst != null && (pctEst - est).abs() > 300) {
+      extras.add((
+        label: 'book percentage',
+        est: pctEst,
+        lo: (pctEst - 1200).clamp(0.0, pctEst),
+        hi: (pctEst + 1200).clamp(pctEst, dur),
+        rate: _fallbackSecPerChar,
+      ));
+    }
+    // The same title elsewhere in the book.
+    if (audioChAlt != null) {
+      final alt = _chapterAnchorEstimate(audioChAlt, offset, total, bookEnd);
+      extras.add((
+        label: 'runner-up "${audioChAlt['title']}"',
+        est: alt.est,
+        lo: alt.lo,
+        hi: alt.hi.isFinite ? alt.hi : alt.est + 3600,
+        rate: alt.rate,
+      ));
+    }
+    // A chapter-derived pace far from real narration says the audio and
+    // ebook chapters are numbered differently (twice too fast means the ebook
+    // chapter holds twice the text the audio chapter narrates): try the
+    // neighbours, nearest to the book percentage first.
+    if (audioCh != null &&
+        (anchorRate.isNaN || anchorRate < 0.05 || anchorRate > 0.12)) {
+      final idx = audio.chapters.indexOf(audioCh);
+      final neighbours = <Map<String, dynamic>>[];
+      if (idx > 0) neighbours.add(audio.chapters[idx - 1] as Map<String, dynamic>);
+      if (idx >= 0 && idx + 1 < audio.chapters.length) {
+        neighbours.add(audio.chapters[idx + 1] as Map<String, dynamic>);
+      }
+      final withEst = neighbours
+          .map((n) => (ch: n, a: _chapterAnchorEstimate(n, offset, total, bookEnd)))
+          .toList();
+      if (pctEst != null) {
+        withEst.sort((x, y) =>
+            (x.a.est - pctEst).abs().compareTo((y.a.est - pctEst).abs()));
+      }
+      for (final n in withEst) {
+        extras.add((
+          label: 'neighbour "${n.ch['title']}"',
+          est: n.a.est,
+          lo: n.a.lo,
+          hi: n.a.hi.isFinite ? n.a.hi : n.a.est + 3600,
+          rate: n.a.rate,
+        ));
+      }
+    }
+
+    for (final c in extras) {
+      if (probed.any((p) => (p - c.est).abs() <= 120)) {
+        debugPrint('[FindAudio] skip ${c.label}: '
+            'est=${c.est.toStringAsFixed(1)} already probed');
+        continue;
+      }
+      probed.add(c.est);
+      final r = await run(c.label, c.est, c.lo, c.hi, c.rate, 2);
+      if (r != null) return r;
+    }
+    debugPrint('[FindAudio] no candidate matched');
+    return null;
   }
 
   /// Initial search window and seconds-per-character pacing from an audio
@@ -2662,6 +2819,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     required double rate,
     required double duration,
     required int maxProbes,
+    required double scanStepSeconds,
   }) async {
     var est = estimate;
     final baseEst = est;
@@ -2699,7 +2857,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
         // audio here isn't in this section): scan around the original
         // estimate instead of declining on the first miss.
         scanStep = scanStep >= 0 ? -(scanStep + 1) : -scanStep;
-        est = (baseEst + scanStep * _scanStepSeconds).clamp(lo, hi);
+        est = (baseEst + scanStep * scanStepSeconds).clamp(lo, hi);
         debugPrint('[FindAudio] probe#$attempt start=${probeStart.toStringAsFixed(1)} '
             'no usable match (fine=${fine.toStringAsFixed(3)}) - '
             'scanning to ${est.toStringAsFixed(1)}');

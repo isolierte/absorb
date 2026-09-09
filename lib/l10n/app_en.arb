@@ -4875,6 +4875,8 @@
   "findInEbookNoEbook": "This book doesn't have an ebook.",
   "findInAudiobook": "Find in audiobook",
   "findInAudiobookSearching": "Finding this spot in the audiobook...",
+  "findInAudiobookStillSearching": "Still searching the audio for this spot...",
+  "findInAudiobookSearchingLong": "Long chapter, still searching. This can take a minute or two...",
   "findInAudiobookNotFound": "Couldn't find this spot in the audiobook.",
   "transcriptionWhisperInfo": "Transcription is powered by Whisper, an open speech recognition model that listens to the narration and writes out the words - all on this device.",
   "transcriptionWhisperLearnMore": "Learn more about Whisper",

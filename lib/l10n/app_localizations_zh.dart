@@ -8554,6 +8554,14 @@ class AppLocalizationsZh extends AppLocalizations {
       'Finding this spot in the audiobook...';
 
   @override
+  String get findInAudiobookStillSearching =>
+      'Still searching the audio for this spot...';
+
+  @override
+  String get findInAudiobookSearchingLong =>
+      'Long chapter, still searching. This can take a minute or two...';
+
+  @override
   String get findInAudiobookNotFound =>
       'Couldn\'t find this spot in the audiobook.';
 
