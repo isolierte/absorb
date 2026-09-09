@@ -2191,26 +2191,38 @@ class ApiService {
 
   /// Update media progress directly (for offline sync).
   /// PATCH /api/me/progress/:id
+  /// [isFinished] null = leave the finished flag out of the body. The server
+  /// only writes the percent it shows (`progress`) when `isFinished` is
+  /// absent; a body carrying `isFinished: false` on an unfinished record moves
+  /// currentTime and nothing else, so the web UI percent never budges. Pass
+  /// false only to deliberately un-finish: that goes out as its own PATCH
+  /// first, because the server zeroes currentTime on that flip.
   Future<void> updateProgress(
     String itemId, {
     required double currentTime,
     required double duration,
-    bool isFinished = false,
+    bool? isFinished,
   }) async {
     try {
+      final progressPath = itemId.length > 36
+          ? '${itemId.substring(0, 36)}/${itemId.substring(37)}'
+          : itemId;
+      final url = Uri.parse('$_cleanBaseUrl/api/me/progress/$progressPath');
+      if (isFinished == false) {
+        final unfinish = await _authPatch(url,
+            body: jsonEncode({'isFinished': false}),
+            timeout: const Duration(seconds: 10));
+        debugPrint('[API] updateProgress unfinish $progressPath: ${unfinish.statusCode}');
+      }
       final body = jsonEncode({
         'currentTime': currentTime,
         'duration': duration,
         'progress': duration > 0 ? (currentTime / duration).clamp(0.0, 1.0) : 0,
-        'isFinished': isFinished,
+        if (isFinished == true) 'isFinished': true,
       });
-      final progressPath = itemId.length > 36
-          ? '${itemId.substring(0, 36)}/${itemId.substring(37)}'
-          : itemId;
       debugPrint('[API] updateProgress PATCH /api/me/progress/$progressPath');
       debugPrint('[API] updateProgress body: currentTime=$currentTime');
-      final resp = await _authPatch(
-        Uri.parse('$_cleanBaseUrl/api/me/progress/$progressPath'),
+      final resp = await _authPatch(url,
         body: body,
         timeout: const Duration(seconds: 10));
       debugPrint('[API] updateProgress response: ${resp.statusCode} ${resp.body}');
@@ -2413,23 +2425,35 @@ class ApiService {
 
   /// Update progress for a podcast episode.
   /// PATCH /api/me/progress/:itemId/:episodeId
+  /// Same [isFinished] contract as [updateProgress]: null leaves the flag out
+  /// so the server writes the percent, true marks finished, false un-finishes
+  /// in a separate PATCH first and then writes the position.
   Future<void> updateEpisodeProgress(
     String itemId,
     String episodeId, {
     required double currentTime,
     required double duration,
-    bool isFinished = false,
+    bool? isFinished,
   }) async {
     try {
-      await _authPatch(
-        Uri.parse('$_cleanBaseUrl/api/me/progress/$itemId/$episodeId'),
+      final url = Uri.parse('$_cleanBaseUrl/api/me/progress/$itemId/$episodeId');
+      if (isFinished == false) {
+        final unfinish = await _authPatch(url,
+            body: jsonEncode({'isFinished': false}),
+            timeout: const Duration(seconds: 10));
+        debugPrint('[API] updateEpisodeProgress unfinish $episodeId: ${unfinish.statusCode}');
+      }
+      final resp = await _authPatch(url,
         body: jsonEncode({
           'currentTime': currentTime,
           'duration': duration,
           'progress': duration > 0 ? (currentTime / duration).clamp(0.0, 1.0) : 0,
-          'isFinished': isFinished,
+          if (isFinished == true) 'isFinished': true,
         }),
         timeout: const Duration(seconds: 10));
+      if (resp.statusCode != 200) {
+        debugPrint('[API] updateEpisodeProgress $episodeId: HTTP ${resp.statusCode}');
+      }
     } catch (e) {
       debugPrint('[API] updateEpisodeProgress error: $e');
     }

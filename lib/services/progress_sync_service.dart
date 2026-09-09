@@ -221,7 +221,7 @@ class ProgressSyncService {
           itemId,
           currentTime: currentTime,
           duration: await serverTrustedDuration(api, itemId, duration),
-          isFinished: isFinished,
+          isFinished: isFinished ? true : null,
         );
       }
 
@@ -353,14 +353,14 @@ class ProgressSyncService {
               apiItemId, episodeId,
               currentTime: localTime,
               duration: syncDuration,
-              isFinished: localFinished,
+              isFinished: localFinished ? true : null,
             );
           } else {
             await api.updateProgress(
               apiItemId,
               currentTime: localTime,
               duration: syncDuration,
-              isFinished: localFinished,
+              isFinished: localFinished ? true : null,
             );
           }
           debugPrint('[Sync] Flushed $itemId via progress update: ${localTime}s');
