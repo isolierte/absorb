@@ -3358,11 +3358,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
     if (seriesId == null || currentSeq == null) return;
     final libraryId = data?['libraryId'] as String? ?? _selectedLibraryId;
 
-    final books = await _api!.getBooksBySeries(
-      libraryId ?? '',
-      seriesId,
-      limit: 100,
-    );
+    final books = await _api!.getAllBooksBySeries(libraryId ?? '', seriesId);
     if (books.isEmpty) return;
 
     final dl = DownloadService();

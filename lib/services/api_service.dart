@@ -1758,6 +1758,38 @@ class ApiService {
     return [];
   }
 
+  /// Every book in a series, in sequence order. The queue and rolling
+  /// download need the whole series: a capped page only ever holds the first
+  /// N sequences, so a long series (GH #377, 200+ entries) never queued
+  /// anything past that cap. limit=0 is unlimited on the server.
+  Future<List<dynamic>> getAllBooksBySeries(
+    String libraryId,
+    String seriesId,
+  ) async {
+    try {
+      final filterValue = base64Encode(utf8.encode(seriesId));
+      final url = '$_cleanBaseUrl/api/libraries/$libraryId/items'
+          '?filter=series.$filterValue'
+          '&sort=media.metadata.series.sequence&limit=0&collapseseries=0';
+      final sw = Stopwatch()..start();
+      final response = await _authGet(
+        Uri.parse(url),
+        timeout: const Duration(seconds: 30),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final results = data['results'] as List<dynamic>? ?? [];
+        debugPrint('[API] getAllBooksBySeries $seriesId: ${results.length} books '
+            '(total=${data['total']}) in ${sw.elapsedMilliseconds}ms');
+        return results;
+      }
+      debugPrint('[API] getAllBooksBySeries $seriesId: HTTP ${response.statusCode}');
+    } catch (e) {
+      debugPrint('[API] getAllBooksBySeries error: $e');
+    }
+    return [];
+  }
+
   /// Expose clean base URL for audio player to build URLs
   String get cleanBaseUrl => _cleanBaseUrl;
 
