@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -115,6 +116,35 @@ Future<Map<String, dynamic>?> cachedEbookFileFor(String itemId) async {
 Future<File> ebookCacheFileFor(String itemId, Map<String, dynamic> ebookFile) async {
   final dir = await _ebookCacheDir();
   return File('${dir.path}/$itemId${ebookExtFromFile(ebookFile)}');
+}
+
+/// The location index epub.js builds by walking the whole book, kept beside
+/// the cached epub so the walk happens once per file instead of on every
+/// open. Tagged with the epub's byte size so a re-downloaded file rebuilds
+/// it. Named `<item>.<ext>.locations.json`, so deleteCachedEbook sweeps it
+/// with the book and cachedEbookFileFor never mistakes it for one.
+File _locationsFileFor(File epub) => File('${epub.path}.locations.json');
+
+Future<String?> loadCachedLocations(File epub) async {
+  try {
+    final f = _locationsFileFor(epub);
+    if (!f.existsSync()) return null;
+    final decoded = jsonDecode(await f.readAsString());
+    if (decoded is! Map) return null;
+    if (decoded['size'] != await epub.length()) return null;
+    final locations = decoded['locations'];
+    return locations is String && locations.isNotEmpty ? locations : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> saveCachedLocations(File epub, String locations) async {
+  try {
+    await _locationsFileFor(epub).writeAsString(
+      jsonEncode({'size': await epub.length(), 'locations': locations}),
+    );
+  } catch (_) {}
 }
 
 /// True if the item's ebook is already cached on disk (readable offline).

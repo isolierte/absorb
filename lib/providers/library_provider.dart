@@ -128,6 +128,7 @@ class LibraryProvider extends ChangeNotifier
           _lastUseLocalServer = auth.useLocalServer;
           if (!_networkOffline && !_manualOffline) {
             debugPrint('[Library] Active server switched - refreshing library data');
+            AudioPlayerService().resetServerSyncBackoff();
             refresh();
           }
         } else {

@@ -142,6 +142,7 @@ class _PlaylistDetailSheetState extends State<PlaylistDetailSheet> {
           final ct = (pd?['currentTime'] as num?)?.toDouble() ?? 0;
           await api.updateEpisodeProgress(libraryItemId, episodeId,
             currentTime: ct, duration: duration, isFinished: false);
+          await lib.markNotFinishedLocally('$libraryItemId-$episodeId');
         }
       } else {
         if (finished) {
@@ -151,6 +152,7 @@ class _PlaylistDetailSheetState extends State<PlaylistDetailSheet> {
           final pd = lib.getProgressData(libraryItemId);
           final ct = (pd?['currentTime'] as num?)?.toDouble() ?? 0;
           await api.markNotFinished(libraryItemId, currentTime: ct, duration: duration);
+          await lib.markNotFinishedLocally(libraryItemId);
         }
       }
     }

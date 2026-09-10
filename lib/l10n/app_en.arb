@@ -759,6 +759,13 @@
   "coverShapeSquare": "Square",
   "coverShapeRectangle": "Rectangle",
   "coverShapeLabel": "Cover shape",
+  "showSubtitles": "Show subtitles",
+  "showSubtitlesOnSubtitle": "Subtitles show under book titles in the library and on home",
+  "showSubtitlesOffSubtitle": "Off - subtitles only on the book details sheet",
+  "subtitleVisibilityLabel": "Subtitles",
+  "subtitleVisibilityDefault": "Default",
+  "subtitleVisibilityShow": "Show",
+  "subtitleVisibilityHide": "Hide",
   "currentLibrarySettingsTitle": "Current library: {name}",
   "@currentLibrarySettingsTitle": {
     "placeholders": { "name": { "type": "String" } }
@@ -1004,6 +1011,8 @@
   },
   "clearLogs": "Clear logs",
   "logsCleared": "Logs cleared",
+  "clearLogsQuestion": "Clear logs?",
+  "clearLogsContent": "This can't be undone. Send them first if you might want them.",
   "sectionAdvanced": "Advanced",
   "localServer": "Local server",
   "localServerInfoTitle": "Local Server",
@@ -1548,7 +1557,7 @@
   "markedAsFinishedNiceWork": "Marked as finished - nice work!",
   "failedToUpdateCheckConnection": "Failed to update - check your connection",
   "markAsNotFinishedQuestion": "Mark as Not Finished?",
-  "markAsNotFinishedContent": "This will clear the finished status but keep your current position.",
+  "markAsNotFinishedContent": "This will clear the finished status and put your position back at the start.",
   "unmark": "Unmark",
   "markedAsNotFinishedBackAtIt": "Marked as not finished - back at it!",
   "resetProgressQuestion": "Reset Progress?",
@@ -3030,14 +3039,8 @@
   "statsScreenOs": "OS",
   "statsScreenPlayMethod": "Play method",
   "statsScreenLoading": "Loading...",
-  "statsScreenJumpToSessionStart": "Jump to session start ({position})",
-  "@statsScreenJumpToSessionStart": {
-    "placeholders": {
-      "position": {
-        "type": "String"
-      }
-    }
-  },
+  "statsScreenJumpToStart": "Jump to start",
+  "statsScreenJumpToEnd": "Jump to end",
   "statsScreenPlayMethodDirect": "Direct play",
   "statsScreenPlayMethodDirectStream": "Direct stream",
   "statsScreenPlayMethodTranscode": "Transcode",
@@ -3608,6 +3611,7 @@
   "notesExport": "Export",
   "notesNewNote": "New note",
   "librarySortFilterUpcomingReleases": "Scan Series",
+  "librarySortFilterMatchAllAuthorsSubtitle": "Fetch a photo and bio for every author from the metadata provider",
   "librarySortFilterUpcomingReleasesSubtitle": "Check Audible for upcoming and missing books in your series",
   "sleepTimerSheetChaptersLeft": "{count, plural, =1{1 chapter left} other{{count} chapters left}}",
   "@sleepTimerSheetChaptersLeft": {
@@ -3833,7 +3837,7 @@
   "tipsSheetVolumeKeyPagesTitle": "Volume-Key Page Turns",
   "tipsSheetVolumeKeyPagesDesc": "Turn ebook pages with the volume keys. Enable it in the reader's settings - normal or mirrored direction, and it can stay on even while audio is playing.",
   "tipsSheetSettingsSyncTitle": "Settings Sync",
-  "tipsSheetSettingsSyncDesc": "Keep your settings, per-book speeds and reader preferences in step across devices through your own WebDAV server. Set it up in Settings under Backup and sync.",
+  "tipsSheetSettingsSyncDesc": "Keep your settings, per-book speeds and Absorbing order in step across devices through your own WebDAV server. Set it up in Settings under Backup and sync.",
   "tipsSheetNavLongPressTitle": "Long-Press the Bottom Tabs",
   "tipsSheetNavLongPressDesc": "Hold the Home tab to switch libraries from any page. Hold the Library tab to jump straight into search.",
   "bookCardUnknownTitle": "Unknown Title",
@@ -4640,6 +4644,17 @@
   "readerVolumeNavOff": "Off",
   "readerVolumeNavNormal": "Normal",
   "readerVolumeNavMirrored": "Mirrored",
+  "readerAutoScroll": "Auto scroll",
+  "readerAutoScrollSubtitle": "The next page paints over this one from the top down - drag the middle of the screen to change speed, tap to stop",
+  "readerAutoScrollStarted": "Auto scroll started",
+  "readerAutoScrollPaused": "Paused - press and hold to stop",
+  "readerAutoScrollResumed": "Auto scroll resumed",
+  "readerAutoScrollStopped": "Auto scroll off",
+  "readerAutoScrollEndOfBook": "End of book - auto scroll off",
+  "readerAutoScrollSpeed": "Speed {percent}%",
+  "@readerAutoScrollSpeed": {
+    "placeholders": { "percent": { "type": "int" } }
+  },
   "readerVolumeNavWhilePlaying": "Even while audio is playing",
   "readerMoreFonts": "Download more fonts",
   "readerFontRemove": "Remove download",
@@ -4794,7 +4809,7 @@
   "syncSourceBody": "This backup turned settings sync on. Use the server's last sync, or make this backup the source of truth? Choosing the backup replaces the copy on the server for all your synced devices.",
   "syncSourceUseServer": "Server's last sync",
   "syncSourceUseBackup": "This backup",
-  "syncSettingsWhatTravels": "Your preferences, per-book speeds, home layout, notes and ebook highlights travel. Logins, download folders and anything not yet sent to your server stay on this device.",
+  "syncSettingsWhatTravels": "Your preferences, per-book speeds, home layout, Absorbing order, notes and ebook highlights travel. Logins, download folders, auto-download switches, reader looks and anything not yet sent to your server stay on this device.",
   "syncSettingsDownloadWarnTitle": "Replace this device's settings?",
   "syncSettingsDownloadWarnBody": "The synced copy will overwrite the settings on this device.",
   "syncSettingsDownloadWarnConfirm": "Replace",
@@ -4888,6 +4903,8 @@
   "findInEbookNoEbook": "This book doesn't have an ebook.",
   "findInAudiobook": "Find in audiobook",
   "findInAudiobookSearching": "Finding this spot in the audiobook...",
+  "findInAudiobookStillSearching": "Still searching the audio for this spot...",
+  "findInAudiobookSearchingLong": "Long chapter, still searching. This can take a minute or two...",
   "findInAudiobookNotFound": "Couldn't find this spot in the audiobook.",
   "transcriptionWhisperInfo": "Transcription is powered by Whisper, an open speech recognition model that listens to the narration and writes out the words - all on this device.",
   "transcriptionWhisperLearnMore": "Learn more about Whisper",

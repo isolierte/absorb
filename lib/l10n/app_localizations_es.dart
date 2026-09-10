@@ -1623,6 +1623,29 @@ class AppLocalizationsEs extends AppLocalizations {
   String get coverShapeLabel => 'Cover shape';
 
   @override
+  String get showSubtitles => 'Show subtitles';
+
+  @override
+  String get showSubtitlesOnSubtitle =>
+      'Subtitles show under book titles in the library and on home';
+
+  @override
+  String get showSubtitlesOffSubtitle =>
+      'Off - subtitles only on the book details sheet';
+
+  @override
+  String get subtitleVisibilityLabel => 'Subtitles';
+
+  @override
+  String get subtitleVisibilityDefault => 'Default';
+
+  @override
+  String get subtitleVisibilityShow => 'Show';
+
+  @override
+  String get subtitleVisibilityHide => 'Hide';
+
+  @override
   String currentLibrarySettingsTitle(String name) {
     return 'Current library: $name';
   }
@@ -2089,6 +2112,13 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get logsCleared => 'Logs cleared';
+
+  @override
+  String get clearLogsQuestion => 'Clear logs?';
+
+  @override
+  String get clearLogsContent =>
+      'This can\'t be undone. Send them first if you might want them.';
 
   @override
   String get sectionAdvanced => 'Advanced';
@@ -3101,7 +3131,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get markAsNotFinishedContent =>
-      'This will clear the finished status but keep your current position.';
+      'This will clear the finished status and put your position back at the start.';
 
   @override
   String get unmark => 'Unmark';
@@ -5420,9 +5450,10 @@ class AppLocalizationsEs extends AppLocalizations {
   String get statsScreenLoading => 'Loading...';
 
   @override
-  String statsScreenJumpToSessionStart(String position) {
-    return 'Jump to session start ($position)';
-  }
+  String get statsScreenJumpToStart => 'Jump to start';
+
+  @override
+  String get statsScreenJumpToEnd => 'Jump to end';
 
   @override
   String get statsScreenPlayMethodDirect => 'Direct play';
@@ -6132,6 +6163,10 @@ class AppLocalizationsEs extends AppLocalizations {
   String get librarySortFilterUpcomingReleases => 'Scan Series';
 
   @override
+  String get librarySortFilterMatchAllAuthorsSubtitle =>
+      'Fetch a photo and bio for every author from the metadata provider';
+
+  @override
   String get librarySortFilterUpcomingReleasesSubtitle =>
       'Check Audible for upcoming and missing books in your series';
 
@@ -6525,7 +6560,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get tipsSheetSettingsSyncDesc =>
-      'Keep your settings, per-book speeds and reader preferences in step across devices through your own WebDAV server. Set it up in Settings under Backup and sync.';
+      'Keep your settings, per-book speeds and Absorbing order in step across devices through your own WebDAV server. Set it up in Settings under Backup and sync.';
 
   @override
   String get tipsSheetNavLongPressTitle => 'Long-Press the Bottom Tabs';
@@ -8042,6 +8077,33 @@ class AppLocalizationsEs extends AppLocalizations {
   String get readerVolumeNavMirrored => 'Mirrored';
 
   @override
+  String get readerAutoScroll => 'Auto scroll';
+
+  @override
+  String get readerAutoScrollSubtitle =>
+      'The next page paints over this one from the top down - drag the middle of the screen to change speed, tap to stop';
+
+  @override
+  String get readerAutoScrollStarted => 'Auto scroll started';
+
+  @override
+  String get readerAutoScrollPaused => 'Paused - press and hold to stop';
+
+  @override
+  String get readerAutoScrollResumed => 'Auto scroll resumed';
+
+  @override
+  String get readerAutoScrollStopped => 'Auto scroll off';
+
+  @override
+  String get readerAutoScrollEndOfBook => 'End of book - auto scroll off';
+
+  @override
+  String readerAutoScrollSpeed(int percent) {
+    return 'Speed $percent%';
+  }
+
+  @override
   String get readerVolumeNavWhilePlaying => 'Even while audio is playing';
 
   @override
@@ -8391,7 +8453,7 @@ class AppLocalizationsEs extends AppLocalizations {
 
   @override
   String get syncSettingsWhatTravels =>
-      'Your preferences, per-book speeds, home layout, notes and ebook highlights travel. Logins, download folders and anything not yet sent to your server stay on this device.';
+      'Your preferences, per-book speeds, home layout, Absorbing order, notes and ebook highlights travel. Logins, download folders, auto-download switches, reader looks and anything not yet sent to your server stay on this device.';
 
   @override
   String get syncSettingsDownloadWarnTitle =>
@@ -8672,6 +8734,14 @@ class AppLocalizationsEs extends AppLocalizations {
   @override
   String get findInAudiobookSearching =>
       'Finding this spot in the audiobook...';
+
+  @override
+  String get findInAudiobookStillSearching =>
+      'Still searching the audio for this spot...';
+
+  @override
+  String get findInAudiobookSearchingLong =>
+      'Long chapter, still searching. This can take a minute or two...';
 
   @override
   String get findInAudiobookNotFound =>

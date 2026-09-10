@@ -1110,6 +1110,33 @@ class _ReorderAbsorbingSheetState extends State<_ReorderAbsorbingSheet> {
   late final DownloadService _downloads;
   late final AudioPlayerService _player;
   String? _currentItemId;
+  final GlobalKey _currentRowKey = GlobalKey();
+
+  /// Bring the playing item into view once a long series or playlist list
+  /// lands, so a 170-book series doesn't open at book 1. Rows are one title
+  /// and one subtitle line, so a rough jump gets close and ensureVisible on
+  /// the now-built row finishes the job.
+  void _scrollToCurrent(List<String> orderedKeys) {
+    final current = _currentItemId;
+    if (current == null) return;
+    final index = orderedKeys.indexOf(current);
+    if (index < 3) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final controller = widget.scrollController;
+      if (!controller.hasClients) return;
+      final rowExtent = 60.0 * MediaQuery.textScalerOf(context).scale(1);
+      final target = ((index - 2) * rowExtent)
+          .clamp(0.0, controller.position.maxScrollExtent);
+      controller.jumpTo(target);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = _currentRowKey.currentContext;
+        if (ctx != null && mounted) {
+          Scrollable.ensureVisible(ctx, alignment: 0.15);
+        }
+      });
+    });
+  }
 
   @override
   void initState() {
@@ -1366,11 +1393,19 @@ class _ReorderAbsorbingSheetState extends State<_ReorderAbsorbingSheet> {
     } else if (seriesRaw is Map) {
       seriesName = seriesRaw['name'] as String?;
     }
+    books.sort((a, b) {
+      final seqA = widget.lib.extractSeries(a).$2 ?? double.maxFinite;
+      final seqB = widget.lib.extractSeries(b).$2 ?? double.maxFinite;
+      return seqA.compareTo(seqB);
+    });
     setState(() {
       _seriesBooks = books;
       _seriesId = sid;
       _seriesName = seriesName;
     });
+    _scrollToCurrent(
+      [for (final b in books) b['id'] as String? ?? ''],
+    );
   }
 
   Future<void> _loadPlaylistContent(int generation) async {
@@ -1395,6 +1430,12 @@ class _ReorderAbsorbingSheetState extends State<_ReorderAbsorbingSheet> {
       _playlistName = pl['name'] as String?;
       _activeQueueSourceId = pid;
     });
+    _scrollToCurrent([
+      for (final item in items)
+        item['episodeId'] != null
+            ? '${item['libraryItemId']}-${item['episodeId']}'
+            : item['libraryItemId'] as String? ?? '',
+    ]);
   }
 
   Future<void> _loadCollectionContent(int generation) async {
@@ -1938,6 +1979,7 @@ class _ReorderAbsorbingSheetState extends State<_ReorderAbsorbingSheet> {
     final isFinished = widget.lib.isItemFinishedByKey(key);
     final isPlaying = _currentItemId == key;
     return Padding(
+      key: isPlaying ? _currentRowKey : null,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -1995,12 +2037,18 @@ class _ReorderAbsorbingSheetState extends State<_ReorderAbsorbingSheet> {
           ),
           child: Row(children: [
             SizedBox(
-              width: 24,
-              child: Text('${index + 1}',
-                  style: tt.labelMedium?.copyWith(
-                    color: isFinished ? cs.onSurface.withValues(alpha: 0.3) : cs.primary,
-                    fontWeight: FontWeight.w700,
-                  )),
+              width: 30,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text('${index + 1}',
+                    maxLines: 1,
+                    softWrap: false,
+                    style: tt.labelMedium?.copyWith(
+                      color: isFinished ? cs.onSurface.withValues(alpha: 0.3) : cs.primary,
+                      fontWeight: FontWeight.w700,
+                    )),
+              ),
             ),
             if (isFinished)
               Icon(Icons.check_circle_rounded,

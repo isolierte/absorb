@@ -20,6 +20,10 @@ const String _androidWidgetName = 'NowPlayingWidget';
 const String _androidWidgetCompactName = 'NowPlayingWidgetCompact';
 const String _androidWidgetTinyName = 'NowPlayingWidgetTiny';
 const String _androidWidgetStatsName = 'StatsWidget';
+// The widgets' Kotlin package. It stays put when the dev flavor changes the
+// application id, and home_widget would otherwise look the classes up under
+// the new id and find nothing.
+const String _androidWidgetPackage = 'com.barnabas.absorb';
 const String _iOSWidgetName = 'NowPlayingWidget';
 const String _iOSArtWidgetName = 'NowPlayingArtWidget';
 const String _iOSStatsWidgetName = 'StatsWidget';
@@ -233,6 +237,28 @@ class HomeWidgetService {
     } catch (e) {
       debugPrint('[WidgetDebug] getStashedNowPlayingPosition failed: $e');
       return null;
+    }
+  }
+
+  /// Forget the stashed position for [itemId] when progress is reset or the
+  /// item is marked not finished. Otherwise the next play resumes from the
+  /// stash and the first sync writes the old spot straight back to the server.
+  Future<void> clearStashedNowPlayingPosition(
+    String itemId,
+    String? episodeId,
+  ) async {
+    if (!supportsStashedNowPlayingPosition(defaultTargetPlatform)) return;
+    try {
+      await _ensureAppGroupId();
+      final stashedItem = await HomeWidget.getWidgetData<String>('np_item_id');
+      if (stashedItem != itemId) return;
+      final stashedEpisode =
+          await HomeWidget.getWidgetData<String>('np_episode_id');
+      if (stashedEpisode != episodeId) return;
+      await HomeWidget.saveWidgetData<double>('np_position_s', 0.0);
+      debugPrint('[WidgetDebug] Cleared stashed position for $itemId ep=$episodeId');
+    } catch (e) {
+      debugPrint('[WidgetDebug] clearStashedNowPlayingPosition failed: $e');
     }
   }
 
@@ -878,10 +904,17 @@ class HomeWidgetService {
 
   Future<void> _updateAllWidgets() async {
     if (Platform.isAndroid) {
-      await HomeWidget.updateWidget(name: _androidWidgetName);
-      await HomeWidget.updateWidget(name: _androidWidgetCompactName);
-      await HomeWidget.updateWidget(name: _androidWidgetTinyName);
-      await HomeWidget.updateWidget(name: _androidWidgetStatsName);
+      for (final name in [
+        _androidWidgetName,
+        _androidWidgetCompactName,
+        _androidWidgetTinyName,
+        _androidWidgetStatsName,
+      ]) {
+        await HomeWidget.updateWidget(
+          name: name,
+          qualifiedAndroidName: '$_androidWidgetPackage.$name',
+        );
+      }
     } else if (Platform.isIOS) {
       await HomeWidget.updateWidget(iOSName: _iOSWidgetName);
       await HomeWidget.updateWidget(iOSName: _iOSArtWidgetName);
@@ -891,7 +924,10 @@ class HomeWidgetService {
 
   Future<void> _updateStatsWidget() async {
     if (Platform.isAndroid) {
-      await HomeWidget.updateWidget(name: _androidWidgetStatsName);
+      await HomeWidget.updateWidget(
+        name: _androidWidgetStatsName,
+        qualifiedAndroidName: '$_androidWidgetPackage.$_androidWidgetStatsName',
+      );
     } else if (Platform.isIOS) {
       await HomeWidget.updateWidget(iOSName: _iOSStatsWidgetName);
     }

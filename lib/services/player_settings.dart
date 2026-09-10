@@ -1049,6 +1049,9 @@ class PlayerSettings {
   static Future<bool> getEreaderVolumeNavWhilePlaying() => _get('ereaderVolumeNavWhilePlaying', false);
   static Future<void> setEreaderVolumeNavWhilePlaying(bool value) => _set('ereaderVolumeNavWhilePlaying', value, notify: true);
 
+  static Future<double> getEreaderAutoScrollSpeed() => _get('ereaderAutoScrollSpeed', 40.0);
+  static Future<void> setEreaderAutoScrollSpeed(double value) => _set('ereaderAutoScrollSpeed', value);
+
   /// When on, the screen is locked to portrait (rotation disabled). Default off
   /// keeps the current behaviour where all orientations are allowed.
   static Future<bool> getLockPortrait() => _get('lockPortrait', false);
@@ -1096,6 +1099,36 @@ class PlayerSettings {
       if (v != null) return v == 'rect';
     }
     return getRectangleCovers();
+  }
+
+  static Future<bool> getShowSubtitles() => _get('showSubtitles', false);
+  static Future<void> setShowSubtitles(bool value) => _set('showSubtitles', value, notify: true);
+
+  /// Per-library subtitle override: 'show', 'hide', or null (= follow the
+  /// global toggle). Most libraries leave the field empty, so a library that
+  /// does fill it in can show subtitles without the rest going taller.
+  static Future<String?> getShowSubtitlesOverride(String libraryId) async {
+    final v = await ScopedPrefs.getString('showSubtitles_$libraryId');
+    return (v == 'show' || v == 'hide') ? v : null;
+  }
+
+  static Future<void> setShowSubtitlesOverride(String libraryId, String? value) async {
+    if (value == null) {
+      await ScopedPrefs.remove('showSubtitles_$libraryId');
+    } else {
+      await ScopedPrefs.setString('showSubtitles_$libraryId', value);
+    }
+    _notify();
+  }
+
+  /// Subtitle visibility for a library: its override if set, else the global
+  /// toggle.
+  static Future<bool> getShowSubtitlesFor(String? libraryId) async {
+    if (libraryId != null) {
+      final v = await getShowSubtitlesOverride(libraryId);
+      if (v != null) return v == 'show';
+    }
+    return getShowSubtitles();
   }
 
   static Future<bool> getSectionGridView() => _get('sectionGridView', false);

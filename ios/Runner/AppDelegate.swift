@@ -7,6 +7,7 @@ import AVKit
 import CoreMedia
 import MediaPlayer
 import just_audio
+import os
 
 let flutterEngine = FlutterEngine(name: "SharedEngine", project: nil, allowHeadlessExecution: true)
 
@@ -46,9 +47,12 @@ let flutterEngine = FlutterEngine(name: "SharedEngine", project: nil, allowHeadl
     // activating unconditionally here would interrupt Spotify the moment
     // Absorb opens. The playback paths (AbsorbAudioEngine / AbsorbPlayerCore /
     // IOSQueueAdvancer) activate it themselves when audio actually starts.
+    // Same category, mode and route policy Dart's audio_session configure
+    // applies once it is up, so nothing flips the policy between launch and
+    // the first play.
     let session = AVAudioSession.sharedInstance()
     do {
-      try session.setCategory(.playback, mode: .spokenAudio)
+      try session.setCategory(.playback, mode: .spokenAudio, policy: .longFormAudio)
     } catch {
       print("[AppDelegate] Audio session setup failed: \(error)")
     }
@@ -171,20 +175,23 @@ let flutterEngine = FlutterEngine(name: "SharedEngine", project: nil, allowHeadl
         let opts = AVAudioSession.InterruptionOptions(rawValue: optionsRaw)
         details.append("shouldResume=\(opts.contains(.shouldResume))")
       }
-      var reasonRaw: UInt = 0
+      var routeDisconnected = false
       if #available(iOS 14.5, *) {
         if let r = note.userInfo?[AVAudioSessionInterruptionReasonKey] as? UInt {
-          reasonRaw = r
           details.append("reasonRaw=\(r)")
+          if #available(iOS 17.0, *) {
+            routeDisconnected =
+              AVAudioSession.InterruptionReason(rawValue: r) == .routeDisconnected
+          }
         }
       }
       self?.logToFlutter("[AudioSession] interruption \(details.joined(separator: " "))")
-      // reason 4 = routeDisconnected: the headphones left, so iOS tore the
-      // session down as an "interruption" that never gets an ended event -
-      // waiting for one leaves the Now Playing claim dead and the next
-      // headset press goes to Apple Music. There is no interrupter to yield
-      // to here, so Dart takes the claim back right away.
-      if typeName == "began", reasonRaw == 4 {
+      // routeDisconnected: the headphones left, so iOS tore the session down
+      // as an "interruption" that never gets an ended event - waiting for one
+      // leaves the Now Playing claim dead and the next headset press goes to
+      // Apple Music. There is no interrupter to yield to here, so Dart takes
+      // the claim back right away.
+      if typeName == "began", routeDisconnected {
         self?.widgetChannel?.invokeMethod("reassertClaim", arguments: nil)
       }
     }
@@ -412,6 +419,22 @@ let flutterEngine = FlutterEngine(name: "SharedEngine", project: nil, allowHeadl
       }
     }
 
+    // Auto scroll in the ebook reader keeps the screen on for as long as it
+    // runs; the reader releases it when the scroll stops or it closes.
+    let screenWakeChannel = FlutterMethodChannel(name: "com.absorb.screen_wake",
+                                                 binaryMessenger: messenger)
+    screenWakeChannel.setMethodCallHandler { (call, result) in
+      switch call.method {
+      case "set":
+        let args = call.arguments as? [String: Any]
+        let on = args?["on"] as? Bool ?? false
+        UIApplication.shared.isIdleTimerDisabled = on
+        result(true)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
     let storageChannel = FlutterMethodChannel(name: "com.absorb.storage",
                                               binaryMessenger: messenger)
     storageChannel.setMethodCallHandler { (call, result) in
@@ -557,6 +580,22 @@ let flutterEngine = FlutterEngine(name: "SharedEngine", project: nil, allowHeadl
       case "isBluetoothAudioConnected":
         result(self?.isBluetoothAudioConnected() ?? false)
 
+      case "getMemoryInfo":
+        // The two numbers that matter for eviction: phys_footprint is what
+        // jetsam judges (RSS is not), and os_proc_available_memory is how
+        // much more this process may take before it is killed.
+        var vmInfo = task_vm_info_data_t()
+        var vmCount = mach_msg_type_number_t(
+          MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &vmInfo) {
+          $0.withMemoryRebound(to: integer_t.self, capacity: Int(vmCount)) {
+            task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &vmCount)
+          }
+        }
+        let footprint: Int64 = kr == KERN_SUCCESS ? Int64(vmInfo.phys_footprint) : -1
+        let available = Int64(os_proc_available_memory())
+        result(["footprint": footprint, "available": available])
+
       case "getAudioDiagnostics":
         // Snapshot of AVAudioSession state for the "tap play, no sound"
         // diagnosis. Returns category, mode, options, output volume,
@@ -613,14 +652,23 @@ let flutterEngine = FlutterEngine(name: "SharedEngine", project: nil, allowHeadl
         let artist = args?["artist"] as? String ?? ""
         let duration = args?["duration"] as? Double ?? 0
         let elapsed = args?["elapsed"] as? Double ?? 0
-        var info: [String: Any] = [
-          MPMediaItemPropertyTitle: title,
-          MPMediaItemPropertyArtist: artist,
-          MPNowPlayingInfoPropertyPlaybackRate: 1.0,
-          MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
-        ]
+        // Merge into what is on the tile for the same book rather than
+        // replacing it: a full replace dropped the artwork audio_service had
+        // set, and audio_service only rewrites when its own copy changes, so
+        // the cover stayed missing on a locked phone until the next chapter.
+        // The subtitle is "Author · Book", so a match means the same book and
+        // its artwork is still right; anything else starts clean.
+        let existing = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        let sameBook = (existing[MPMediaItemPropertyArtist] as? String) == artist
+        var info: [String: Any] = sameBook ? existing : [:]
+        info[MPMediaItemPropertyTitle] = title
+        info[MPMediaItemPropertyArtist] = artist
+        info[MPNowPlayingInfoPropertyPlaybackRate] = 1.0
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = elapsed
         if duration > 0 {
           info[MPMediaItemPropertyPlaybackDuration] = duration
+        } else {
+          info.removeValue(forKey: MPMediaItemPropertyPlaybackDuration)
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
         result(true)

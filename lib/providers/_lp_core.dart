@@ -432,6 +432,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       unawaited(_auth?.ensureUserInfoLoaded() ?? Future.value());
       if (_api != null) {
         debugPrint('[Library] Back online — flushing pending syncs');
+        AudioPlayerService().resetServerSyncBackoff();
         ProgressSyncService().flushPendingSync(api: _api!);
         ProgressSyncService().flushOfflineListeningTime(api: _api!);
         LocalSessionService().flushPending(api: _api!);
@@ -874,10 +875,32 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
     notifyListeners();
   }
 
+  /// After "mark as not finished" lands on the server, which clears the
+  /// position there, drop the local copy too so the card and the next play
+  /// don't carry on from the old spot.
+  Future<void> markNotFinishedLocally(String itemId) async {
+    // A loaded player still holds the old position in memory and would sync
+    // it straight back on the next play, so let it go the way reset does.
+    final player = AudioPlayerService();
+    final loadedKey = player.currentEpisodeId != null
+        ? '${player.currentItemId}-${player.currentEpisodeId}'
+        : player.currentItemId;
+    if (loadedKey == itemId) await player.stopWithoutSaving();
+    await ProgressSyncService().deleteLocal(itemId);
+    resetProgressFor(itemId);
+  }
+
   void resetProgressFor(String itemId) {
     if (itemId.length > 36 && _progressMap[itemId]?['isFinished'] == true) {
       nudgeUnfinishedEpisodeCount(itemId.substring(0, 36), 1);
     }
+    // The widget stash is a third copy of the position, outside the scoped
+    // prefs. Left alone it wins the resume race and the first sync writes the
+    // old spot back to the server.
+    unawaited(HomeWidgetService().clearStashedNowPlayingPosition(
+      itemId.length > 36 ? itemId.substring(0, 36) : itemId,
+      itemId.length > 36 ? itemId.substring(37) : null,
+    ));
     _progressMap.remove(itemId);
     _localProgressOverrides.remove(itemId);
     _locallyFinishedItems.remove(itemId);
@@ -1140,7 +1163,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         final localReachable = await ApiService.pingServer(
           auth.localServerUrl,
           customHeaders: auth.customHeaders,
-        ).timeout(const Duration(seconds: 3), onTimeout: () => false);
+        ).timeout(const Duration(seconds: 6), onTimeout: () => false);
         if (localReachable) {
           debugPrint('[Library] Local server ping succeeded — going online');
           await auth.checkLocalServer();
@@ -1230,10 +1253,14 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       return;
     }
 
-    final reachable = await ApiService.pingServer(
+    final probe = await ApiService.pingServerDetailed(
       auth.localServerUrl,
       customHeaders: auth.customHeaders,
-    ).timeout(const Duration(seconds: 3), onTimeout: () => false);
+    ).timeout(
+      const Duration(seconds: 6),
+      onTimeout: () => (ok: false, detail: 'no answer within 6s'),
+    );
+    final reachable = probe.ok;
 
     if (auth.useLocalServer) {
       if (reachable) {
@@ -1242,11 +1269,11 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       } else {
         _localProbeFailures++;
         if (_localProbeFailures >= _localProbeFailuresToFlip) {
-          debugPrint('[Library] Local probe failed ${_localProbeFailures}x — switching to remote');
+          debugPrint('[Library] Local probe failed ${_localProbeFailures}x — switching to remote (${probe.detail})');
           auth.clearLocalOverride();
           _localProbeFailures = 0;
         } else {
-          debugPrint('[Library] Local probe miss $_localProbeFailures/$_localProbeFailuresToFlip');
+          debugPrint('[Library] Local probe miss $_localProbeFailures/$_localProbeFailuresToFlip (${probe.detail})');
         }
       }
     } else if (reachable) {
@@ -1254,6 +1281,8 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       await auth.checkLocalServer();
       _localLastReachableAt = DateTime.now();
       _localProbeFailures = 0;
+    } else {
+      debugPrint('[Library] Local probe miss while on remote (${probe.detail})');
     }
   }
 
@@ -2577,6 +2606,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       dl.downloadItem(
         api: _api!,
         itemId: key,
+        automatic: true,
         title: ep?['title'] as String? ?? 'Episode',
         author: metadata['title'] as String? ?? '',
         coverUrl: getCoverUrl(podcastId),
@@ -2638,6 +2668,19 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
 
   // ── Rolling auto-download ──
 
+  /// Whether a progress entry shows real listening. A reset keeps the row:
+  /// Absorb's own reset writes it back with progress 0, position 0, hidden
+  /// from Continue Listening and the newest lastUpdate, so picking anchors
+  /// by lastUpdate alone let an accidentally played then reset episode drag
+  /// a whole show's rolling window to the newest episodes.
+  static bool _hasListened(Map<String, dynamic>? progress) {
+    if (progress == null) return false;
+    if (progress['hideFromContinueListening'] == true) return false;
+    final fraction = (progress['progress'] as num?)?.toDouble() ?? 0;
+    final currentTime = (progress['currentTime'] as num?)?.toDouble() ?? 0;
+    return fraction > 0 || currentTime > 0;
+  }
+
   void _catchUpRollingDownloads() async {
     if (_api == null || isOffline || _rollingDownloadSeries.isEmpty) return;
 
@@ -2657,6 +2700,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         final key = entry.key;
         final data = entry.value;
         if (data['isFinished'] == true) continue;
+        if (!_hasListened(data)) continue;
         final lastUpdate = data['lastUpdate'] as num? ?? 0;
 
         if (key.length > 36 && key.substring(0, 36) == seriesOrShowId) {
@@ -2908,7 +2952,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         if (progress?['isFinished'] == true) continue;
         firstUnfinishedKey ??= key;
         final lastUpdate = progress?['lastUpdate'] as num? ?? 0;
-        if (progress != null && lastUpdate > latestUpdate) {
+        if (_hasListened(progress) && lastUpdate > latestUpdate) {
           latestUpdate = lastUpdate;
           latestKey = key;
         }
@@ -3251,6 +3295,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       final error = await downloads.downloadItem(
         api: api,
         itemId: key,
+        automatic: true,
         title: title,
         author: author,
         coverUrl: getCoverUrl(libraryItemId),
@@ -3335,11 +3380,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
     if (seriesId == null || currentSeq == null) return;
     final libraryId = data?['libraryId'] as String? ?? _selectedLibraryId;
 
-    final books = await _api!.getBooksBySeries(
-      libraryId ?? '',
-      seriesId,
-      limit: 100,
-    );
+    final books = await _api!.getAllBooksBySeries(libraryId ?? '', seriesId);
     if (books.isEmpty) return;
 
     final dl = DownloadService();
@@ -3355,6 +3396,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       dl.downloadItem(
         api: _api!,
         itemId: bookId,
+        automatic: true,
         title: md['title'] as String? ?? '',
         author: md['authorName'] as String? ?? '',
         coverUrl: getCoverUrl(bookId),
@@ -3395,6 +3437,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
       dl.downloadItem(
         api: _api!,
         itemId: id,
+        automatic: true,
         title: metadata['title'] as String? ?? '',
         author: metadata['authorName'] as String? ?? '',
         coverUrl: getCoverUrl(id),
@@ -3446,11 +3489,13 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
     final anchorFinished = _progressMap[compoundKey]?['isFinished'] == true;
     if (!anchorFinished &&
         !dl.isDownloaded(compoundKey) &&
-        !dl.isDownloading(compoundKey)) {
+        !dl.isDownloading(compoundKey) &&
+        !dl.isAutoDownloadBlocked(compoundKey)) {
       final curEp = episodes[currentIdx] as Map<String, dynamic>;
       dl.downloadItem(
         api: _api!,
         itemId: compoundKey,
+        automatic: true,
         title: curEp['title'] as String? ?? 'Episode',
         author: metadata['title'] as String? ?? '',
         coverUrl: getCoverUrl(showId),
@@ -3472,10 +3517,15 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         continue;
       }
       if (_progressMap[key]?['isFinished'] == true) continue;
+      // Deleted by hand: downloadItem would skip it anyway, and counting it
+      // here is what announced "Downloading 2 episodes" on every launch while
+      // nothing downloaded.
+      if (dl.isAutoDownloadBlocked(key)) continue;
 
       dl.downloadItem(
         api: _api!,
         itemId: key,
+        automatic: true,
         title: ep['title'] as String? ?? 'Episode',
         author: metadata['title'] as String? ?? '',
         coverUrl: getCoverUrl(showId),

@@ -17,6 +17,7 @@ import 'package:http/http.dart' as http;
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:intl/intl.dart';
 import '../l10n/app_localizations.dart';
 import 'book_stats_sheet.dart';
 import '../services/wording.dart';
@@ -345,7 +346,8 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
               _asin = freshAsin;
             });
             await ApiService.setCachedAudibleRating(
-                widget.itemId, freshRating, freshAsin);
+                widget.itemId, freshRating, freshAsin,
+                count: (rating['count'] as num?)?.toInt());
           }
           return;
         }
@@ -531,6 +533,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     final metadata = media['metadata'] as Map<String, dynamic>? ?? {};
     final chapters = media['chapters'] as List<dynamic>? ?? [];
     final title = metadata['title'] as String? ?? l.unknown;
+    final subtitle = metadata['subtitle'] as String? ?? '';
     final authorName = metadata['authorName'] as String? ?? '';
     final descRaw = metadata['description'] as String? ?? '';
     final duration = (media['duration'] as num?)?.toDouble() ?? 0;
@@ -618,6 +621,11 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
         const SizedBox(height: 16),
       ],
       Text(title, textAlign: TextAlign.center, style: tt.headlineSmall?.copyWith(fontWeight: FontWeight.w700, color: cs.onSurface)),
+      if (subtitle.isNotEmpty) ...[
+        const SizedBox(height: 4),
+        Text(subtitle, textAlign: TextAlign.center,
+          style: tt.titleSmall?.copyWith(color: cs.onSurfaceVariant)),
+      ],
       const SizedBox(height: 4),
       _buildAuthorLinks(context, metadata, cs, tt, accent),
       _buildNarratorLinks(context, metadata, cs, tt, accent),
@@ -639,6 +647,11 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
                 const SizedBox(width: 6),
                 Text((_rating!['rating'] as num).toStringAsFixed(1),
                   style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: cs.onSurfaceVariant)),
+                if (((_rating!['count'] as num?) ?? 0) > 0) ...[
+                  const SizedBox(width: 3),
+                  Text('(${_formatRatingCount((_rating!['count'] as num).toInt(), l.localeName)})',
+                    style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+                ],
                 const SizedBox(width: 4),
                 Text(l.onAudible, style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
               ]),
@@ -955,7 +968,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
         const SizedBox(height: 6),
         HtmlDescription(
           html: descRaw,
-          maxLines: 6,
+          maxLines: null,
           style: tt.bodySmall?.copyWith(color: cs.onSurface.withValues(alpha: 0.7), height: 1.5),
           linkColor: accent,
         )],
@@ -1626,6 +1639,14 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     return domains[code] ?? 'audible.com';
   }
 
+  static String _formatRatingCount(int count, String locale) {
+    try {
+      return NumberFormat.decimalPattern(locale).format(count);
+    } catch (_) {
+      return NumberFormat.decimalPattern().format(count);
+    }
+  }
+
   void _showAudibleReviews(BuildContext context) {
     final asin = _asin;
     if (asin == null) return;
@@ -1812,10 +1833,14 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     if (seriesId == null) return;
     final auth = context.read<AuthProvider>();
     final itemLibraryId = _item?['libraryId'] as String?;
+    // This book is in the series by definition, so the sheet can show it at
+    // once instead of a spinner while the server answers.
+    final item = _item;
     showSeriesBooksSheet(
       context,
       seriesName: seriesName,
       seriesId: seriesId,
+      books: item != null ? [item] : const [],
       serverUrl: auth.serverUrl,
       token: auth.token,
       libraryId: itemLibraryId,
@@ -1858,7 +1883,7 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
 
   Future<void> _removeEbookOffline(BuildContext context) async {
     final l = AppLocalizations.of(context)!;
-    await DownloadService().deleteDownload(widget.itemId);
+    await DownloadService().deleteDownload(widget.itemId, byUser: true);
     if (mounted) showOverlayToast(context, l.ebookRemovedOffline, icon: Icons.delete_outline_rounded);
   }
 
@@ -2297,10 +2322,9 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     if (api == null) return;
     try {
       await api.markNotFinished(widget.itemId, currentTime: currentTime, duration: duration);
-      await ProgressSyncService().deleteLocal(widget.itemId);
       if (context.mounted) {
         final lib = context.read<LibraryProvider>();
-        lib.resetProgressFor(widget.itemId);
+        await lib.markNotFinishedLocally(widget.itemId);
         lib.unblockFromAbsorbing(widget.itemId);
         await _loadItem();
         await lib.refresh();
@@ -2343,7 +2367,13 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     await ProgressSyncService().deleteLocal(widget.itemId);
     
     // Reset server progress (PATCH to zero + hide from continue listening)
-    final serverSuccess = await api.resetProgress(widget.itemId, duration);
+    String? progressId;
+    if (context.mounted) {
+      final data = context.read<LibraryProvider>().getProgressData(widget.itemId);
+      progressId = data?['id'] as String?;
+    }
+    final serverSuccess =
+        await api.resetProgress(widget.itemId, duration, progressId: progressId);
     
     // Clear from library provider (mark as reset — forces 0 progress)
     if (context.mounted) context.read<LibraryProvider>().resetProgressFor(widget.itemId);

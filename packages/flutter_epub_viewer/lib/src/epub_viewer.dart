@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../flutter_epub_viewer.dart';
+import 'local_book_server.dart';
 import 'utils.dart';
 
 /// Callback for text selection events with WebView-relative coordinates.
@@ -48,6 +49,8 @@ class EpubViewer extends StatefulWidget {
     this.onDeselection,
     this.onInitialPositionLoading,
     this.onInitialPositionLoaded,
+    this.cachedLocations,
+    this.onLocationsGenerated,
     this.onTouchDown,
     this.onTouchUp,
     this.suppressNativeContextMenu = false,
@@ -75,6 +78,14 @@ class EpubViewer extends StatefulWidget {
 
   /// Callback when the location are generated for epub, progress will be only available after this
   final VoidCallback? onLocationLoaded;
+
+  /// Location index saved from an earlier open of this same file (epub.js
+  /// JSON); handed to the page so it can skip generating it.
+  final String? cachedLocations;
+
+  /// Fires with the freshly generated location index when no cached one was
+  /// supplied, so the caller can keep it for next time.
+  final ValueChanged<String>? onLocationsGenerated;
 
   ///Call back when chapters are loaded
   final ValueChanged<List<EpubChapter>>? onChaptersLoaded;
@@ -221,7 +232,13 @@ class _EpubViewerState extends State<EpubViewer> {
     allowsLinkPreview: false,
     verticalScrollBarEnabled: false,
     selectionGranularity: SelectionGranularity.CHARACTER,
+    // The page lives on a file: URL and fetches the book from the loopback
+    // server; without this the browser treats that as a cross-origin request
+    // from a file page and refuses it.
+    allowUniversalAccessFromFileURLs: true,
   );
+
+  LocalBookServer? _bookServer;
 
   @override
   void initState() {
@@ -481,6 +498,16 @@ class _EpubViewerState extends State<EpubViewer> {
     );
 
     webViewController?.addJavaScriptHandler(
+      handlerName: "locationsGenerated",
+      callback: (data) {
+        final json = data.isNotEmpty ? data[0] : null;
+        if (json is String && json.isNotEmpty) {
+          widget.onLocationsGenerated?.call(json);
+        }
+      },
+    );
+
+    webViewController?.addJavaScriptHandler(
       handlerName: "markClicked",
       callback: (data) {
         String cfi = data[0];
@@ -570,7 +597,6 @@ class _EpubViewerState extends State<EpubViewer> {
   }
 
   Future<void> loadBook() async {
-    var data = await widget.epubSource.epubData;
     final displaySettings = widget.displaySettings ?? EpubDisplaySettings();
     String manager = displaySettings.manager.name;
     String flow = displaySettings.flow.name;
@@ -597,18 +623,44 @@ class _EpubViewerState extends State<EpubViewer> {
 
     String xpathParam = initialXPath != null ? '"$initialXPath"' : 'null';
 
-    // Stream the file into the page in base64 chunks and assemble it there.
-    // Serializing the whole book into the script source (the upstream
-    // data.join(',') approach) builds a string several times the file size on
-    // both sides of the bridge; a 322MB epub took the entire app down with an
-    // out-of-memory crash before it ever reached the WebView.
-    const chunkBytes = 2 * 1024 * 1024;
-    await webViewController?.evaluateJavascript(source: 'beginBookData()');
-    for (var i = 0; i < data.length; i += chunkBytes) {
-      final end = (i + chunkBytes < data.length) ? i + chunkBytes : data.length;
-      final b64 = base64Encode(Uint8List.sublistView(data, i, end));
+    final sourceFile = widget.epubSource.file;
+    final started = DateTime.now();
+    if (sourceFile != null) {
+      // A file on disk is served to the page over loopback and fetched by
+      // the page itself: no Dart-side copy, no base64, no bridge round trips.
+      // A 322MB book spent about twelve seconds in that transfer.
+      await _bookServer?.stop();
+      final server = LocalBookServer(sourceFile);
+      _bookServer = server;
+      final url = await server.start();
       await webViewController?.evaluateJavascript(
-        source: 'appendBookData("$b64")',
+        source: 'setBookUrl(${jsonEncode(url)})',
+      );
+      debugPrint('[EpubViewer] serving book over loopback (${await sourceFile.length()} bytes)');
+    } else {
+      // Bytes from a URL or an asset: stream them into the page in base64
+      // chunks and assemble there. Serializing the whole book into the script
+      // source (the upstream data.join(',') approach) builds a string several
+      // times the file size on both sides of the bridge; a 322MB epub took
+      // the entire app down with an out-of-memory crash before it ever
+      // reached the WebView.
+      final data = await widget.epubSource.epubData;
+      const chunkBytes = 2 * 1024 * 1024;
+      await webViewController?.evaluateJavascript(source: 'beginBookData()');
+      for (var i = 0; i < data.length; i += chunkBytes) {
+        final end = (i + chunkBytes < data.length) ? i + chunkBytes : data.length;
+        final b64 = base64Encode(Uint8List.sublistView(data, i, end));
+        await webViewController?.evaluateJavascript(
+          source: 'appendBookData("$b64")',
+        );
+      }
+      debugPrint('[EpubViewer] pushed ${data.length} bytes into the page in '
+          '${DateTime.now().difference(started).inMilliseconds}ms');
+    }
+    final cachedLocations = widget.cachedLocations;
+    if (cachedLocations != null && cachedLocations.isNotEmpty) {
+      await webViewController?.evaluateJavascript(
+        source: 'setCachedLocations(${jsonEncode(cachedLocations)})',
       );
     }
     webViewController?.evaluateJavascript(
@@ -733,6 +785,8 @@ class _EpubViewerState extends State<EpubViewer> {
   @override
   void dispose() {
     _stopSelectionMonitoring();
+    _bookServer?.stop();
+    _bookServer = null;
     super.dispose();
   }
 }

@@ -202,6 +202,10 @@ class ApiService {
 
   static String appVersion = '1.3.0'; // fallback; overwritten by initVersion()
   static String appBuild = ''; // build number; set by initVersion()
+  // The installed application id. The dev flavor installs beside the stable
+  // app under its own id, so anything that names the package at runtime (the
+  // cover content provider's authority) reads this rather than assuming.
+  static String packageName = 'com.barnabas.absorb'; // set by initVersion()
 
   /// Version plus build (e.g. "1.9.1+198") for logs. `appVersion` stays clean
   /// because it's also sent to the server as clientVersion.
@@ -225,6 +229,7 @@ class ApiService {
       final info = await PackageInfo.fromPlatform();
       appVersion = info.version;
       appBuild = info.buildNumber;
+      if (info.packageName.isNotEmpty) packageName = info.packageName;
     } catch (_) {}
   }
 
@@ -993,8 +998,10 @@ class ApiService {
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
+      debugPrint('[API] getLibraryItems page=$page limit=$limit: '
+          'HTTP ${response.statusCode}');
     } catch (e) {
-      // ignore
+      debugPrint('[API] getLibraryItems page=$page limit=$limit failed: $e');
     }
     return null;
   }
@@ -1373,8 +1380,9 @@ class ApiService {
       if (response.statusCode == 200) {
         return jsonDecode(response.body) as Map<String, dynamic>;
       }
+      debugPrint('[API] getLibrarySeries page=$page: HTTP ${response.statusCode}');
     } catch (e) {
-      // ignore
+      debugPrint('[API] getLibrarySeries page=$page failed: $e');
     }
     return null;
   }
@@ -1447,6 +1455,61 @@ class ApiService {
     return [];
   }
 
+  /// One page of a library's authors, sorted server-side. [sort] is `name`,
+  /// `lastFirst`, `addedAt`, `updatedAt` or `numBooks`. Stock ABS answers
+  /// `{results, total, ...}`; a server that ignores paging answers `{authors}`
+  /// with everything, which callers treat as the only page.
+  Future<Map<String, dynamic>?> getLibraryAuthorsPage(
+    String libraryId, {
+    int page = 0,
+    int limit = 100,
+    String sort = 'name',
+    int desc = 0,
+  }) async {
+    try {
+      final sw = Stopwatch()..start();
+      final response = await _authGet(
+        Uri.parse('$_cleanBaseUrl/api/libraries/$libraryId/authors'
+            '?limit=$limit&page=$page&sort=$sort&desc=$desc'),
+        timeout: const Duration(seconds: 30),
+      );
+      debugPrint('[API] getLibraryAuthorsPage page=$page: HTTP '
+          '${response.statusCode} in ${sw.elapsedMilliseconds}ms');
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (e) {
+      debugPrint('[API] getLibraryAuthorsPage page=$page failed: $e');
+    }
+    return null;
+  }
+
+  /// Fetch several items by id in one request. One indexed query server-side,
+  /// unlike the filtered items listing, which sorts the whole library first.
+  Future<List<Map<String, dynamic>>> getLibraryItemsBatch(
+      List<String> ids) async {
+    if (ids.isEmpty) return const [];
+    try {
+      final sw = Stopwatch()..start();
+      final response = await _authPost(
+        Uri.parse('$_cleanBaseUrl/api/items/batch/get'),
+        body: jsonEncode({'libraryItemIds': ids}),
+        timeout: const Duration(seconds: 30),
+      );
+      debugPrint('[API] getLibraryItemsBatch ${ids.length} ids: HTTP '
+          '${response.statusCode} in ${sw.elapsedMilliseconds}ms');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return (data['libraryItems'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .toList();
+      }
+    } catch (e) {
+      debugPrint('[API] getLibraryItemsBatch failed: $e');
+    }
+    return const [];
+  }
+
   /// Get all narrators for a library. ABS exposes narrators only via the
   /// filterdata endpoint as a list of name strings (no IDs/images/bios).
   Future<List<String>> getLibraryNarrators(String libraryId) async {
@@ -1462,6 +1525,35 @@ class ApiService {
       debugPrint('[API] getLibraryNarrators error: $e');
     }
     return [];
+  }
+
+  /// Book count per narrator name. The narrators endpoint walks every book
+  /// with a narrator server-side, so it is slower than filterdata; callers
+  /// fetch it after the names and treat an empty map as "not available".
+  Future<Map<String, int>> getLibraryNarratorCounts(String libraryId) async {
+    try {
+      final response = await _authGet(
+        Uri.parse('$_cleanBaseUrl/api/libraries/$libraryId/narrators'),
+        timeout: const Duration(seconds: 30),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final counts = <String, int>{};
+        for (final n in data['narrators'] as List<dynamic>? ?? const []) {
+          if (n is! Map<String, dynamic>) continue;
+          final name = n['name'] as String?;
+          final count = (n['numBooks'] as num?)?.toInt();
+          if (name != null && name.isNotEmpty && count != null) {
+            counts[name] = count;
+          }
+        }
+        return counts;
+      }
+      debugPrint('[API] getLibraryNarratorCounts: HTTP ${response.statusCode}');
+    } catch (e) {
+      debugPrint('[API] getLibraryNarratorCounts failed: $e');
+    }
+    return const {};
   }
 
   /// Get books narrated by a specific person.
@@ -1492,7 +1584,7 @@ class ApiService {
   /// Get full author details including description/bio.
   Future<Map<String, dynamic>?> getAuthorById(String authorId, {String? libraryId}) async {
     try {
-      var url = '$_cleanBaseUrl/api/authors/$authorId?include=items';
+      var url = '$_cleanBaseUrl/api/authors/$authorId?include=items,series';
       if (libraryId != null) url += '&library=$libraryId';
       final response = await _authGet(
         Uri.parse(url),
@@ -1666,6 +1758,38 @@ class ApiService {
     return [];
   }
 
+  /// Every book in a series, in sequence order. The queue and rolling
+  /// download need the whole series: a capped page only ever holds the first
+  /// N sequences, so a long series (GH #377, 200+ entries) never queued
+  /// anything past that cap. limit=0 is unlimited on the server.
+  Future<List<dynamic>> getAllBooksBySeries(
+    String libraryId,
+    String seriesId,
+  ) async {
+    try {
+      final filterValue = base64Encode(utf8.encode(seriesId));
+      final url = '$_cleanBaseUrl/api/libraries/$libraryId/items'
+          '?filter=series.$filterValue'
+          '&sort=media.metadata.series.sequence&limit=0&collapseseries=0';
+      final sw = Stopwatch()..start();
+      final response = await _authGet(
+        Uri.parse(url),
+        timeout: const Duration(seconds: 30),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final results = data['results'] as List<dynamic>? ?? [];
+        debugPrint('[API] getAllBooksBySeries $seriesId: ${results.length} books '
+            '(total=${data['total']}) in ${sw.elapsedMilliseconds}ms');
+        return results;
+      }
+      debugPrint('[API] getAllBooksBySeries $seriesId: HTTP ${response.statusCode}');
+    } catch (e) {
+      debugPrint('[API] getAllBooksBySeries error: $e');
+    }
+    return [];
+  }
+
   /// Expose clean base URL for audio player to build URLs
   String get cleanBaseUrl => _cleanBaseUrl;
 
@@ -1818,6 +1942,22 @@ class ApiService {
     required double currentTime,
     required double duration,
     int timeListened = 60,
+  }) async =>
+      await syncPlaybackSessionStatus(
+        sessionId,
+        currentTime: currentTime,
+        duration: duration,
+        timeListened: timeListened,
+      ) ==
+      200;
+
+  /// The sync's status code, or null when the request itself failed. A 404
+  /// means the server no longer has the session; anything else is transient.
+  Future<int?> syncPlaybackSessionStatus(
+    String sessionId, {
+    required double currentTime,
+    required double duration,
+    int timeListened = 60,
   }) async {
     try {
       final response = await _authPost(
@@ -1831,9 +1971,9 @@ class ApiService {
           'duration': duration,
         }),
         timeout: const Duration(seconds: 10));
-      return response.statusCode == 200;
+      return response.statusCode;
     } catch (_) {
-      return false;
+      return null;
     }
   }
 
@@ -2051,26 +2191,40 @@ class ApiService {
 
   /// Update media progress directly (for offline sync).
   /// PATCH /api/me/progress/:id
+  /// [isFinished] null = leave the finished flag out of the body. The server
+  /// only writes the percent it shows (`progress`) when `isFinished` is
+  /// absent; a body carrying `isFinished: false` on an unfinished record moves
+  /// currentTime and nothing else, so the web UI percent never budges. Pass
+  /// false only to deliberately un-finish: the server answers that by
+  /// clearing the position to 0, same as the web UI's "mark as not finished",
+  /// so [currentTime] is not sent in that case.
   Future<void> updateProgress(
     String itemId, {
     required double currentTime,
     required double duration,
-    bool isFinished = false,
+    bool? isFinished,
   }) async {
     try {
+      final progressPath = itemId.length > 36
+          ? '${itemId.substring(0, 36)}/${itemId.substring(37)}'
+          : itemId;
+      final url = Uri.parse('$_cleanBaseUrl/api/me/progress/$progressPath');
+      if (isFinished == false) {
+        final unfinish = await _authPatch(url,
+            body: jsonEncode({'isFinished': false}),
+            timeout: const Duration(seconds: 10));
+        debugPrint('[API] updateProgress unfinish $progressPath: ${unfinish.statusCode}');
+        return;
+      }
       final body = jsonEncode({
         'currentTime': currentTime,
         'duration': duration,
         'progress': duration > 0 ? (currentTime / duration).clamp(0.0, 1.0) : 0,
-        'isFinished': isFinished,
+        if (isFinished == true) 'isFinished': true,
       });
-      final progressPath = itemId.length > 36
-          ? '${itemId.substring(0, 36)}/${itemId.substring(37)}'
-          : itemId;
       debugPrint('[API] updateProgress PATCH /api/me/progress/$progressPath');
       debugPrint('[API] updateProgress body: currentTime=$currentTime');
-      final resp = await _authPatch(
-        Uri.parse('$_cleanBaseUrl/api/me/progress/$progressPath'),
+      final resp = await _authPatch(url,
         body: body,
         timeout: const Duration(seconds: 10));
       debugPrint('[API] updateProgress response: ${resp.statusCode} ${resp.body}');
@@ -2138,8 +2292,10 @@ class ApiService {
     );
   }
 
-  /// Reset progress to zero.
-  Future<bool> resetProgress(String itemId, double duration) async {
+  /// Reset progress to zero. [progressId] is the server's progress record id
+  /// when one is known; the delete route only accepts that.
+  Future<bool> resetProgress(String itemId, double duration,
+      {String? progressId}) async {
     try {
       final progressPath = itemId.length > 36
           ? '${itemId.substring(0, 36)}/${itemId.substring(37)}'
@@ -2148,10 +2304,7 @@ class ApiService {
       final apiItemId = isCompound ? itemId.substring(0, 36) : itemId;
       final episodeId = isCompound ? itemId.substring(37) : null;
 
-      // DELETE progress entry
-      await _authDelete(
-        Uri.parse('$_cleanBaseUrl/api/me/progress/$progressPath'),
-        timeout: const Duration(seconds: 10));
+      if (progressId != null) await deleteMediaProgress(progressId);
 
       // Start session at 0 and close — forces server to update position
       final sessionData = await startPlaybackSession(apiItemId, episodeId: episodeId);
@@ -2274,37 +2427,82 @@ class ApiService {
 
   /// Update progress for a podcast episode.
   /// PATCH /api/me/progress/:itemId/:episodeId
+  /// Same [isFinished] contract as [updateProgress]: null leaves the flag out
+  /// so the server writes the percent, true marks finished, false un-finishes
+  /// and lets the server clear the position to 0.
   Future<void> updateEpisodeProgress(
     String itemId,
     String episodeId, {
     required double currentTime,
     required double duration,
-    bool isFinished = false,
+    bool? isFinished,
   }) async {
     try {
-      await _authPatch(
-        Uri.parse('$_cleanBaseUrl/api/me/progress/$itemId/$episodeId'),
+      final url = Uri.parse('$_cleanBaseUrl/api/me/progress/$itemId/$episodeId');
+      if (isFinished == false) {
+        final unfinish = await _authPatch(url,
+            body: jsonEncode({'isFinished': false}),
+            timeout: const Duration(seconds: 10));
+        debugPrint('[API] updateEpisodeProgress unfinish $episodeId: ${unfinish.statusCode}');
+        return;
+      }
+      final resp = await _authPatch(url,
         body: jsonEncode({
           'currentTime': currentTime,
           'duration': duration,
           'progress': duration > 0 ? (currentTime / duration).clamp(0.0, 1.0) : 0,
-          'isFinished': isFinished,
+          if (isFinished == true) 'isFinished': true,
         }),
         timeout: const Duration(seconds: 10));
+      if (resp.statusCode != 200) {
+        debugPrint('[API] updateEpisodeProgress $episodeId: HTTP ${resp.statusCode}');
+      }
     } catch (e) {
       debugPrint('[API] updateEpisodeProgress error: $e');
     }
   }
 
-  /// DELETE /api/me/progress/:itemId/:episodeId
-  Future<bool> deleteEpisodeProgress(String itemId, String episodeId) async {
+  /// DELETE /api/me/progress/:progressId
+  /// The server's delete route takes the progress record's own id (from the
+  /// user's mediaProgress list), not the item or episode id.
+  Future<bool> deleteMediaProgress(String progressId) async {
     try {
       final resp = await _authDelete(
-        Uri.parse('$_cleanBaseUrl/api/me/progress/$itemId/$episodeId'),
+        Uri.parse('$_cleanBaseUrl/api/me/progress/$progressId'),
         timeout: const Duration(seconds: 10));
+      debugPrint('[API] deleteMediaProgress $progressId: ${resp.statusCode}');
       return resp.statusCode >= 200 && resp.statusCode < 300;
     } catch (e) {
-      debugPrint('[API] deleteEpisodeProgress error: $e');
+      debugPrint('[API] deleteMediaProgress error: $e');
+      return false;
+    }
+  }
+
+  /// Zero an episode's progress in place when there is no record id to delete.
+  /// ABS ignores `progress` in a PATCH that also carries `isFinished`, and only
+  /// zeroes an in-progress record when `isFinished` is absent, so this goes in
+  /// two steps: clear the finished flag, then write the zero position.
+  Future<bool> zeroEpisodeProgress(
+    String itemId,
+    String episodeId, {
+    required double duration,
+  }) async {
+    try {
+      final url = Uri.parse('$_cleanBaseUrl/api/me/progress/$itemId/$episodeId');
+      final unfinish = await _authPatch(url,
+          body: jsonEncode({'isFinished': false}),
+          timeout: const Duration(seconds: 10));
+      final zero = await _authPatch(url,
+          body: jsonEncode({
+            'currentTime': 0,
+            'duration': duration,
+            'progress': 0,
+          }),
+          timeout: const Duration(seconds: 10));
+      debugPrint('[API] zeroEpisodeProgress: unfinish=${unfinish.statusCode} zero=${zero.statusCode}');
+      return unfinish.statusCode == 200 && zero.statusCode == 200;
+    } catch (e) {
+      debugPrint('[API] zeroEpisodeProgress error: $e');
       return false;
     }
   }
@@ -2514,55 +2712,78 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>?> getSeries(String seriesId, {String? libraryId, void Function(List<dynamic> books, int total, {double? totalDuration})? onPageLoaded}) async {
+    if (libraryId == null) return null;
     try {
-      Map<String, dynamic>? seriesMeta;
-
-      // Get series metadata
-      if (libraryId != null) {
-        final metaResp = await _authGet(
-          Uri.parse('$_cleanBaseUrl/api/libraries/$libraryId/series/$seriesId'),
-          timeout: const Duration(seconds: 30));
-        if (metaResp.statusCode == 200) {
-          seriesMeta = jsonDecode(metaResp.body) as Map<String, dynamic>;
-        }
-      }
-
-      // Get all books in the series, paginating if needed.
       // ABS filter format: series.<base64(seriesId)>
-      if (libraryId != null) {
-        final filterValue = base64Encode(utf8.encode(seriesId));
-        const pageSize = 100;
-        final allResults = <dynamic>[];
-        int total = 0;
-        int page = 0;
-        while (true) {
-          final url = '$_cleanBaseUrl/api/libraries/$libraryId/items?filter=series.$filterValue&sort=media.metadata.series.sequence&limit=$pageSize&page=$page&collapseseries=0';
-          final itemsResp = await _authGet(
-            Uri.parse(url),
+      final filterValue = base64Encode(utf8.encode(seriesId));
+      const pageSize = 100;
+      final allResults = <dynamic>[];
+      int total = 0;
+      int page = 0;
+
+      Future<Map<String, dynamic>?> fetchMeta() async {
+        final sw = Stopwatch()..start();
+        try {
+          final resp = await _authGet(
+            Uri.parse('$_cleanBaseUrl/api/libraries/$libraryId/series/$seriesId'),
             timeout: const Duration(seconds: 30));
-          if (itemsResp.statusCode != 200) {
-            debugPrint('[API] getSeries items page $page failed: ${itemsResp.statusCode}');
-            break;
+          debugPrint('[API] getSeries $seriesId meta: HTTP ${resp.statusCode} '
+              'in ${sw.elapsedMilliseconds}ms');
+          if (resp.statusCode == 200) {
+            return jsonDecode(resp.body) as Map<String, dynamic>;
           }
-          final data = jsonDecode(itemsResp.body) as Map<String, dynamic>;
-          final results = data['results'] as List<dynamic>? ?? [];
-          total = (data['total'] as num?)?.toInt() ?? results.length;
-          allResults.addAll(results);
-          onPageLoaded?.call(allResults, total, totalDuration: (seriesMeta?['totalDuration'] as num?)?.toDouble());
-          if (allResults.length >= total || results.isEmpty) break;
-          page++;
+        } catch (e) {
+          debugPrint('[API] getSeries $seriesId meta failed after '
+              '${sw.elapsedMilliseconds}ms: $e');
         }
-        if (allResults.isNotEmpty) {
-          return {
-            'id': seriesId,
-            'name': seriesMeta?['name'] ?? '',
-            'books': allResults,
-            'total': total,
-            if (seriesMeta != null) 'totalDuration': seriesMeta['totalDuration'],
-          };
-        }
+        return null;
       }
-    } catch (_) {
+
+      Future<http.Response> fetchItems(int p) => _authGet(
+        Uri.parse('$_cleanBaseUrl/api/libraries/$libraryId/items?filter=series.$filterValue&sort=media.metadata.series.sequence&limit=$pageSize&page=$p&collapseseries=0'),
+        timeout: const Duration(seconds: 30));
+
+      // The books are what the sheet shows; the series record only adds the
+      // name and total duration. Ask for the first page of books before the
+      // record so a slow server answers the important one first, and let the
+      // record land whenever it does.
+      var itemsFuture = fetchItems(0);
+      final metaFuture = fetchMeta();
+      while (true) {
+        final pageSw = Stopwatch()..start();
+        final itemsResp = await itemsFuture;
+        if (itemsResp.statusCode != 200) {
+          debugPrint('[API] getSeries $seriesId items page $page failed: ${itemsResp.statusCode}');
+          break;
+        }
+        final data = jsonDecode(itemsResp.body) as Map<String, dynamic>;
+        final results = data['results'] as List<dynamic>? ?? [];
+        total = (data['total'] as num?)?.toInt() ?? results.length;
+        debugPrint('[API] getSeries $seriesId items page=$page results=${results.length} '
+            'total=$total in ${pageSw.elapsedMilliseconds}ms');
+        allResults.addAll(results);
+        onPageLoaded?.call(allResults, total);
+        if (allResults.length >= total || results.isEmpty) break;
+        page++;
+        itemsFuture = fetchItems(page);
+      }
+
+      final seriesMeta = await metaFuture;
+      final totalDuration = (seriesMeta?['totalDuration'] as num?)?.toDouble();
+      if (allResults.isNotEmpty) {
+        if (totalDuration != null) {
+          onPageLoaded?.call(allResults, total, totalDuration: totalDuration);
+        }
+        return {
+          'id': seriesId,
+          'name': seriesMeta?['name'] ?? '',
+          'books': allResults,
+          'total': total,
+          if (seriesMeta != null) 'totalDuration': seriesMeta['totalDuration'],
+        };
+      }
+    } catch (e) {
+      debugPrint('[API] getSeries $seriesId failed: $e');
     }
     return null;
   }
@@ -2575,6 +2796,7 @@ class ApiService {
       final filterValue = base64Encode(utf8.encode(seriesId));
       final allResults = <dynamic>[];
       int page = 0;
+      final sw = Stopwatch()..start();
       while (true) {
         final url = '$_cleanBaseUrl/api/libraries/$libraryId/items?filter=series.$filterValue&sort=addedAt&limit=100&page=$page&collapseseries=1';
         final resp = await _authGet(Uri.parse(url), timeout: const Duration(seconds: 60));
@@ -2585,6 +2807,9 @@ class ApiService {
         final data = jsonDecode(resp.body) as Map<String, dynamic>;
         final results = data['results'] as List<dynamic>? ?? [];
         final total = (data['total'] as num?)?.toInt() ?? results.length;
+        debugPrint('[API] getSeriesCollapsed page=$page results=${results.length} '
+            'total=$total in ${sw.elapsedMilliseconds}ms');
+        sw.reset();
         allResults.addAll(results);
         if (allResults.length >= total || results.isEmpty) break;
         page++;
@@ -2677,9 +2902,14 @@ class ApiService {
     return [];
   }
 
-  /// Fetch Audible rating from Audnexus API using ASIN.
-  /// Returns { rating, asin } or null.
+  /// Audible rating for an ASIN: the score and how many ratings it rests on.
+  /// Audible's own catalog answers both, on the store matching the device
+  /// locale like every other Audible lookup here. Audnexus stays as the
+  /// fallback; it knows the score but not the count.
+  /// Returns { rating, count, asin } or null.
   static Future<Map<String, dynamic>?> getAudibleRating(String asin) async {
+    final catalog = await _audibleCatalogRating(asin);
+    if (catalog != null) return catalog;
     try {
       final response = await http.get(
         Uri.parse('https://api.audnex.us/books/$asin?region=$_region&update=1'),
@@ -2691,6 +2921,7 @@ class ApiService {
         if (rating != null) {
           return {
             'rating': double.tryParse(rating) ?? 0.0,
+            'count': null,
             'asin': asin,
           };
         }
@@ -2699,6 +2930,35 @@ class ApiService {
       // ignore — Audnexus is optional
     }
     return null;
+  }
+
+  static Future<Map<String, dynamic>?> _audibleCatalogRating(String asin) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          'https://api.audible$_audibleTld/1.0/catalog/products/'
+          '${Uri.encodeComponent(asin)}?response_groups=rating',
+        ),
+      ).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final product = data['product'] as Map<String, dynamic>?;
+      final overall = (product?['rating'] as Map<String, dynamic>?)
+          ?['overall_distribution'] as Map<String, dynamic>?;
+      final score = (overall?['average_rating'] as num?)?.toDouble();
+      final count = (overall?['num_ratings'] as num?)?.toInt();
+      if (score == null || !score.isFinite || score <= 0 || score > 5) {
+        return null;
+      }
+      return {
+        'rating': score,
+        'count': count != null && count >= 0 ? count : null,
+        'asin': asin,
+      };
+    } catch (e) {
+      debugPrint('[API] Audible catalog rating $asin error: $e');
+      return null;
+    }
   }
 
   /// Read a previously-fetched Audible rating from local cache, keyed by
@@ -2715,6 +2975,7 @@ class ApiService {
       if (rating == null || rating <= 0) return null;
       return {
         'rating': rating,
+        'count': (data['count'] as num?)?.toInt(),
         'asin': data['asin'] as String?,
       };
     } catch (_) {
@@ -2725,12 +2986,13 @@ class ApiService {
   /// Persist a fresh Audible rating so subsequent book detail opens render
   /// the stars instantly without waiting on Audnexus.
   static Future<void> setCachedAudibleRating(
-      String itemId, double rating, String? asin) async {
+      String itemId, double rating, String? asin, {int? count}) async {
     if (rating <= 0) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('audible_rating_$itemId', jsonEncode({
         'rating': rating,
+        'count': count,
         'asin': asin,
         'fetchedAt': DateTime.now().millisecondsSinceEpoch,
       }));

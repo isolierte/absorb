@@ -14,6 +14,7 @@ import android.media.audiofx.Equalizer
 import android.media.audiofx.LoudnessEnhancer
 import android.media.audiofx.Virtualizer
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -21,10 +22,12 @@ import android.os.StatFs
 
 import android.util.Log
 import android.view.KeyEvent
+import android.view.WindowManager
 import com.ryanheise.audioservice.AudioService
 import com.ryanheise.audioservice.AudioServiceActivity
 import com.ryanheise.audioservice.AudioServicePlugin
 import com.ryanheise.just_audio.MonoController
+import es.antonborri.home_widget.HomeWidgetLaunchIntent
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.plugin.common.MethodCall
@@ -51,6 +54,22 @@ class MainActivity : AudioServiceActivity() {
     // playback can crash the process natively, which Kotlin can't catch. Once
     // init proves the engine is unavailable, skip attaching native effects.
     private var effectsAvailable: Boolean = true
+
+    // Android brings a task back from a dead process by recreating its root
+    // activity with the intent that first created it. When that was the
+    // widget's play button, every later plain open (the widget cover, the
+    // installer's Open button, Recents) replayed the play deep link and the
+    // app started playing on its own. A real tap always creates the activity
+    // fresh, so only a recreated one can be carrying a replay.
+    override fun onCreate(savedInstanceState: Bundle?) {
+        if (savedInstanceState != null &&
+            intent?.action == HomeWidgetLaunchIntent.HOME_WIDGET_LAUNCH_ACTION) {
+            Log.d(TAG, "Dropping replayed widget launch ${intent.data}")
+            intent.action = Intent.ACTION_MAIN
+            intent.data = null
+        }
+        super.onCreate(savedInstanceState)
+    }
 
     override fun provideFlutterEngine(context: Context): FlutterEngine? {
         // Headless service starts (Android Auto binds, media buttons on a
@@ -122,6 +141,24 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
         Log.d(TAG, "EQ method channel registered")
+
+        // Auto scroll in the ebook reader keeps the screen on for as long as it
+        // runs; the reader releases it when the scroll stops or it closes.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.absorb.screen_wake")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "set" -> {
+                        val on = call.argument<Boolean>("on") ?: false
+                        if (on) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.absorb.audio_diag")
             .setMethodCallHandler { call, result ->
@@ -528,6 +565,12 @@ class MainActivity : AudioServiceActivity() {
             Log.d(TAG, "Discarding search intent: $action")
             return
         }
+        // FlutterActivity never adopts a new intent, so the widget's "launched
+        // from" query kept answering with whatever intent created the activity.
+        // On a task restored from a dead process that lost a fresh play-button
+        // tap and replayed an old one. Keep the latest so the query sees the
+        // tap that actually opened the app this time.
+        setIntent(intent)
         super.onNewIntent(intent)
     }
 

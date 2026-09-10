@@ -3058,6 +3058,48 @@ abstract class AppLocalizations {
   /// **'Cover shape'**
   String get coverShapeLabel;
 
+  /// No description provided for @showSubtitles.
+  ///
+  /// In en, this message translates to:
+  /// **'Show subtitles'**
+  String get showSubtitles;
+
+  /// No description provided for @showSubtitlesOnSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles show under book titles in the library and on home'**
+  String get showSubtitlesOnSubtitle;
+
+  /// No description provided for @showSubtitlesOffSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Off - subtitles only on the book details sheet'**
+  String get showSubtitlesOffSubtitle;
+
+  /// No description provided for @subtitleVisibilityLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles'**
+  String get subtitleVisibilityLabel;
+
+  /// No description provided for @subtitleVisibilityDefault.
+  ///
+  /// In en, this message translates to:
+  /// **'Default'**
+  String get subtitleVisibilityDefault;
+
+  /// No description provided for @subtitleVisibilityShow.
+  ///
+  /// In en, this message translates to:
+  /// **'Show'**
+  String get subtitleVisibilityShow;
+
+  /// No description provided for @subtitleVisibilityHide.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide'**
+  String get subtitleVisibilityHide;
+
   /// No description provided for @currentLibrarySettingsTitle.
   ///
   /// In en, this message translates to:
@@ -3873,6 +3915,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Logs cleared'**
   String get logsCleared;
+
+  /// No description provided for @clearLogsQuestion.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear logs?'**
+  String get clearLogsQuestion;
+
+  /// No description provided for @clearLogsContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This can\'t be undone. Send them first if you might want them.'**
+  String get clearLogsContent;
 
   /// No description provided for @sectionAdvanced.
   ///
@@ -5641,7 +5695,7 @@ abstract class AppLocalizations {
   /// No description provided for @markAsNotFinishedContent.
   ///
   /// In en, this message translates to:
-  /// **'This will clear the finished status but keep your current position.'**
+  /// **'This will clear the finished status and put your position back at the start.'**
   String get markAsNotFinishedContent;
 
   /// No description provided for @unmark.
@@ -9608,11 +9662,17 @@ abstract class AppLocalizations {
   /// **'Loading...'**
   String get statsScreenLoading;
 
-  /// No description provided for @statsScreenJumpToSessionStart.
+  /// No description provided for @statsScreenJumpToStart.
   ///
   /// In en, this message translates to:
-  /// **'Jump to session start ({position})'**
-  String statsScreenJumpToSessionStart(String position);
+  /// **'Jump to start'**
+  String get statsScreenJumpToStart;
+
+  /// No description provided for @statsScreenJumpToEnd.
+  ///
+  /// In en, this message translates to:
+  /// **'Jump to end'**
+  String get statsScreenJumpToEnd;
 
   /// No description provided for @statsScreenPlayMethodDirect.
   ///
@@ -10653,6 +10713,12 @@ abstract class AppLocalizations {
   /// **'Scan Series'**
   String get librarySortFilterUpcomingReleases;
 
+  /// No description provided for @librarySortFilterMatchAllAuthorsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetch a photo and bio for every author from the metadata provider'**
+  String get librarySortFilterMatchAllAuthorsSubtitle;
+
   /// No description provided for @librarySortFilterUpcomingReleasesSubtitle.
   ///
   /// In en, this message translates to:
@@ -11280,7 +11346,7 @@ abstract class AppLocalizations {
   /// No description provided for @tipsSheetSettingsSyncDesc.
   ///
   /// In en, this message translates to:
-  /// **'Keep your settings, per-book speeds and reader preferences in step across devices through your own WebDAV server. Set it up in Settings under Backup and sync.'**
+  /// **'Keep your settings, per-book speeds and Absorbing order in step across devices through your own WebDAV server. Set it up in Settings under Backup and sync.'**
   String get tipsSheetSettingsSyncDesc;
 
   /// No description provided for @tipsSheetNavLongPressTitle.
@@ -13887,6 +13953,54 @@ abstract class AppLocalizations {
   /// **'Mirrored'**
   String get readerVolumeNavMirrored;
 
+  /// No description provided for @readerAutoScroll.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto scroll'**
+  String get readerAutoScroll;
+
+  /// No description provided for @readerAutoScrollSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'The next page paints over this one from the top down - drag the middle of the screen to change speed, tap to stop'**
+  String get readerAutoScrollSubtitle;
+
+  /// No description provided for @readerAutoScrollStarted.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto scroll started'**
+  String get readerAutoScrollStarted;
+
+  /// No description provided for @readerAutoScrollPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused - press and hold to stop'**
+  String get readerAutoScrollPaused;
+
+  /// No description provided for @readerAutoScrollResumed.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto scroll resumed'**
+  String get readerAutoScrollResumed;
+
+  /// No description provided for @readerAutoScrollStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Auto scroll off'**
+  String get readerAutoScrollStopped;
+
+  /// No description provided for @readerAutoScrollEndOfBook.
+  ///
+  /// In en, this message translates to:
+  /// **'End of book - auto scroll off'**
+  String get readerAutoScrollEndOfBook;
+
+  /// No description provided for @readerAutoScrollSpeed.
+  ///
+  /// In en, this message translates to:
+  /// **'Speed {percent}%'**
+  String readerAutoScrollSpeed(int percent);
+
   /// No description provided for @readerVolumeNavWhilePlaying.
   ///
   /// In en, this message translates to:
@@ -14508,7 +14622,7 @@ abstract class AppLocalizations {
   /// No description provided for @syncSettingsWhatTravels.
   ///
   /// In en, this message translates to:
-  /// **'Your preferences, per-book speeds, home layout, notes and ebook highlights travel. Logins, download folders and anything not yet sent to your server stay on this device.'**
+  /// **'Your preferences, per-book speeds, home layout, Absorbing order, notes and ebook highlights travel. Logins, download folders, auto-download switches, reader looks and anything not yet sent to your server stay on this device.'**
   String get syncSettingsWhatTravels;
 
   /// No description provided for @syncSettingsDownloadWarnTitle.
@@ -14984,6 +15098,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Finding this spot in the audiobook...'**
   String get findInAudiobookSearching;
+
+  /// No description provided for @findInAudiobookStillSearching.
+  ///
+  /// In en, this message translates to:
+  /// **'Still searching the audio for this spot...'**
+  String get findInAudiobookStillSearching;
+
+  /// No description provided for @findInAudiobookSearchingLong.
+  ///
+  /// In en, this message translates to:
+  /// **'Long chapter, still searching. This can take a minute or two...'**
+  String get findInAudiobookSearchingLong;
 
   /// No description provided for @findInAudiobookNotFound.
   ///

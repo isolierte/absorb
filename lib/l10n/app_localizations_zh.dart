@@ -215,23 +215,23 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String loginSignInAs(String username) {
-    return 'Sign in as $username?';
+    return '以 $username 登录？';
   }
 
   @override
-  String get loginSignInToServer => 'Sign in to this server?';
+  String get loginSignInToServer => '登录到此服务器？';
 
   @override
   String loginSignedInAs(String username) {
-    return 'Signed in as $username';
+    return '已登录为 $username';
   }
 
   @override
-  String get adminCreateSetupFile => 'Share sign-in';
+  String get adminCreateSetupFile => '共享登录';
 
   @override
   String adminSetupFileDescription(String username) {
-    return 'Creates a private sign-in link for $username that only works in the Absorb app.';
+    return '为 $username 创建私密登录链接，只能用于 Absorb。';
   }
 
   @override
@@ -577,7 +577,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get explicitContent => 'Explicit';
 
   @override
-  String get missingMetadata => 'Missing Metadata';
+  String get missingMetadata => '缺失元数据';
 
   @override
   String get genre => '分类';
@@ -619,19 +619,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get authorLastFirst => 'Author (Last, First)';
 
   @override
-  String get progressSort => 'Progress';
+  String get progressSort => '进度';
 
   @override
-  String get dateStarted => 'Date Started';
+  String get dateStarted => '开始日期';
 
   @override
-  String get dateFinished => 'Date Finished';
+  String get dateFinished => '完成日期';
 
   @override
-  String get episodeCount => 'Episode Count';
+  String get episodeCount => '集数';
 
   @override
-  String get sequence => 'Series Sequence';
+  String get sequence => '系列序号';
 
   @override
   String get absorbingTitle => '正在收听';
@@ -1043,16 +1043,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get statsChartHeatmap => 'Heatmap';
 
   @override
-  String get statsChartDays7 => '7 days';
+  String get statsChartDays7 => '7 天';
 
   @override
-  String get statsChartDays30 => '30 days';
+  String get statsChartDays30 => '30天';
 
   @override
-  String get statsLast30Days => 'Last 30 days';
+  String get statsLast30Days => '过去 30 天';
 
   @override
-  String get statsThisYearTitle => 'This year';
+  String get statsThisYearTitle => '今年';
 
   @override
   String get statsSectionsTitle => 'Sections';
@@ -1061,20 +1061,20 @@ class AppLocalizationsZh extends AppLocalizations {
   String get statsSectionTimePeriods => 'Time periods';
 
   @override
-  String get statsHeatmapLess => 'Less';
+  String get statsHeatmapLess => '更少';
 
   @override
-  String get statsHeatmapMore => 'More';
+  String get statsHeatmapMore => '更多';
 
   @override
-  String get statsDayOfWeek => 'Average by day of week';
+  String get statsDayOfWeek => '每周日均';
 
   @override
   String get statsTimeSavedLabel => 'Saved by speed';
 
   @override
   String statsTimeSavedSince(String date) {
-    return 'since $date';
+    return '自 $date 起';
   }
 
   @override
@@ -1171,23 +1171,23 @@ class AppLocalizationsZh extends AppLocalizations {
       'New podcast episodes and upcoming book releases, checked in the background';
 
   @override
-  String get notifIntervalOff => 'Off';
+  String get notifIntervalOff => '关闭';
 
   @override
   String notifIntervalMinutes(int n) {
-    return 'Every $n minutes';
+    return '每 $n 分钟';
   }
 
   @override
-  String get notifIntervalHour => 'Every hour';
+  String get notifIntervalHour => '每小时';
 
   @override
   String notifIntervalHours(int n) {
-    return 'Every $n hours';
+    return '每 $n 小时';
   }
 
   @override
-  String get settingsBatteryUnrestricted => 'Allow unrestricted battery use';
+  String get settingsBatteryUnrestricted => '允许不受限制地使用电池';
 
   @override
   String get settingsBatteryUnrestrictedDesc =>
@@ -1242,17 +1242,17 @@ class AppLocalizationsZh extends AppLocalizations {
   String get colorSourceNowPlaying => '正在播放';
 
   @override
-  String get colorSourceDynamic => 'Dynamic';
+  String get colorSourceDynamic => '动态';
 
   @override
-  String get colorSourceManual => 'Manual';
+  String get colorSourceManual => '手动';
 
   @override
   String get colorSourceManualDescription =>
       'Use a fixed app color you choose below';
 
   @override
-  String get colorSourceCustom => 'Custom';
+  String get colorSourceCustom => '自定义';
 
   @override
   String get useColorEverywhereLabel => 'Use this color everywhere';
@@ -1367,10 +1367,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cardScrubbersBoth => 'Both';
 
   @override
-  String get cardScrubbersChapter => 'Chapter';
+  String get cardScrubbersChapter => '章节';
 
   @override
-  String get cardScrubbersLocked => 'Locked';
+  String get cardScrubbersLocked => '已锁定';
 
   @override
   String get cardScrubbersBothSubtitle => 'Full book and chapter bars can seek';
@@ -1466,20 +1466,20 @@ class AppLocalizationsZh extends AppLocalizations {
   String get queueModeCollection => 'Collection';
 
   @override
-  String get queueModeInfoPlaylist => 'Playlist Queue';
+  String get queueModeInfoPlaylist => '播放队列';
 
   @override
   String get queueModeInfoPlaylistDesc => '按所选播放列表的顺序播放，跳过已完成的项目，并在列表结束时停止。';
 
   @override
-  String get queuePlaylistPickerTitle => 'Choose a playlist';
+  String get queuePlaylistPickerTitle => '选择一个播放列表';
 
   @override
-  String get queuePlaylistNone => 'No playlist selected';
+  String get queuePlaylistNone => '没有选择播放列表';
 
   @override
   String queuePlaylistActiveLabel(String name) {
-    return 'Playlist: $name';
+    return '播放列表：$name';
   }
 
   @override
@@ -1487,7 +1487,7 @@ class AppLocalizationsZh extends AppLocalizations {
       'Start a playlist queue by opening a playlist on the home page.';
 
   @override
-  String get exit => 'Exit';
+  String get exit => '退出';
 
   @override
   String upNext(String label) {
@@ -1594,6 +1594,29 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get coverShapeLabel => 'Cover shape';
+
+  @override
+  String get showSubtitles => 'Show subtitles';
+
+  @override
+  String get showSubtitlesOnSubtitle =>
+      'Subtitles show under book titles in the library and on home';
+
+  @override
+  String get showSubtitlesOffSubtitle =>
+      'Off - subtitles only on the book details sheet';
+
+  @override
+  String get subtitleVisibilityLabel => 'Subtitles';
+
+  @override
+  String get subtitleVisibilityDefault => 'Default';
+
+  @override
+  String get subtitleVisibilityShow => 'Show';
+
+  @override
+  String get subtitleVisibilityHide => 'Hide';
 
   @override
   String currentLibrarySettingsTitle(String name) {
@@ -2043,6 +2066,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get logsCleared => '日志已清除';
+
+  @override
+  String get clearLogsQuestion => 'Clear logs?';
+
+  @override
+  String get clearLogsContent =>
+      'This can\'t be undone. Send them first if you might want them.';
 
   @override
   String get sectionAdvanced => '高级';
@@ -5337,9 +5367,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get statsScreenLoading => 'Loading...';
 
   @override
-  String statsScreenJumpToSessionStart(String position) {
-    return 'Jump to session start ($position)';
-  }
+  String get statsScreenJumpToStart => 'Jump to start';
+
+  @override
+  String get statsScreenJumpToEnd => 'Jump to end';
 
   @override
   String get statsScreenPlayMethodDirect => 'Direct play';
@@ -6048,6 +6079,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get librarySortFilterUpcomingReleases => '即将发布';
 
   @override
+  String get librarySortFilterMatchAllAuthorsSubtitle =>
+      'Fetch a photo and bio for every author from the metadata provider';
+
+  @override
   String get librarySortFilterUpcomingReleasesSubtitle => 'Audible 中检查系列新书';
 
   @override
@@ -6434,7 +6469,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get tipsSheetSettingsSyncDesc =>
-      'Keep your settings, per-book speeds and reader preferences in step across devices through your own WebDAV server. Set it up in Settings under Backup and sync.';
+      'Keep your settings, per-book speeds and Absorbing order in step across devices through your own WebDAV server. Set it up in Settings under Backup and sync.';
 
   @override
   String get tipsSheetNavLongPressTitle => 'Long-Press the Bottom Tabs';
@@ -7948,6 +7983,33 @@ class AppLocalizationsZh extends AppLocalizations {
   String get readerVolumeNavMirrored => 'Mirrored';
 
   @override
+  String get readerAutoScroll => 'Auto scroll';
+
+  @override
+  String get readerAutoScrollSubtitle =>
+      'The next page paints over this one from the top down - drag the middle of the screen to change speed, tap to stop';
+
+  @override
+  String get readerAutoScrollStarted => 'Auto scroll started';
+
+  @override
+  String get readerAutoScrollPaused => 'Paused - press and hold to stop';
+
+  @override
+  String get readerAutoScrollResumed => 'Auto scroll resumed';
+
+  @override
+  String get readerAutoScrollStopped => 'Auto scroll off';
+
+  @override
+  String get readerAutoScrollEndOfBook => 'End of book - auto scroll off';
+
+  @override
+  String readerAutoScrollSpeed(int percent) {
+    return 'Speed $percent%';
+  }
+
+  @override
   String get readerVolumeNavWhilePlaying => 'Even while audio is playing';
 
   @override
@@ -8297,7 +8359,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get syncSettingsWhatTravels =>
-      'Your preferences, per-book speeds, home layout, notes and ebook highlights travel. Logins, download folders and anything not yet sent to your server stay on this device.';
+      'Your preferences, per-book speeds, home layout, Absorbing order, notes and ebook highlights travel. Logins, download folders, auto-download switches, reader looks and anything not yet sent to your server stay on this device.';
 
   @override
   String get syncSettingsDownloadWarnTitle =>
@@ -8578,6 +8640,14 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get findInAudiobookSearching =>
       'Finding this spot in the audiobook...';
+
+  @override
+  String get findInAudiobookStillSearching =>
+      'Still searching the audio for this spot...';
+
+  @override
+  String get findInAudiobookSearchingLong =>
+      'Long chapter, still searching. This can take a minute or two...';
 
   @override
   String get findInAudiobookNotFound =>
