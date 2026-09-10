@@ -1783,7 +1783,10 @@ mixin _AbsorbingMixin on ChangeNotifier, _StateMixin, _CoreMixin {
   Future<List<Map<String, dynamic>>> fetchBooksBySeries(
       String libraryId, String seriesId) async {
     if (_api == null) return const [];
-    final books = await _api!.getAllBooksBySeries(libraryId, seriesId);
+    // Shares the up-next cache (5 minute TTL): a long series on a slow server
+    // took 15s to fetch, and the queue sheet is reopened far more often than
+    // a series changes.
+    final books = await _seriesBooksFor(libraryId, seriesId) ?? const [];
     return books.whereType<Map<String, dynamic>>().toList();
   }
 
