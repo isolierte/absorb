@@ -5173,7 +5173,7 @@ class AudioPlayerService extends ChangeNotifier {
     // artist/chapter text but the car still shows old, the issue is downstream
     // of audio_service's MediaSession push.
     debugPrint(
-      '[Handler] mediaItem.add: item=$itemId title="${labels.title}" artist="${labels.subtitle}" dur=${displayDuration.round()}s chapter=$chapter hasHandler=${_handler != null}',
+      '[Handler] mediaItem.add: item=$itemId title="${labels.title}" artist="${labels.subtitle}" dur=${displayDuration.round()}s chapter=$chapter hasHandler=${_handler != null} art=${coverUrl == null ? 'none' : coverUrl.startsWith('content:') ? 'content' : coverUrl.startsWith('file:') ? 'file' : coverUrl.startsWith('http') ? 'http' : 'other'}',
     );
     _handler!.mediaItem.add(
       MediaItem(
