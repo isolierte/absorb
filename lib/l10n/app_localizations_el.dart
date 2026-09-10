@@ -3129,7 +3129,7 @@ class AppLocalizationsEl extends AppLocalizations {
 
   @override
   String get markAsNotFinishedContent =>
-      'This will clear the finished status but keep your current position.';
+      'This will clear the finished status and put your position back at the start.';
 
   @override
   String get unmark => 'Unmark';

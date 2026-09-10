@@ -240,6 +240,28 @@ class HomeWidgetService {
     }
   }
 
+  /// Forget the stashed position for [itemId] when progress is reset or the
+  /// item is marked not finished. Otherwise the next play resumes from the
+  /// stash and the first sync writes the old spot straight back to the server.
+  Future<void> clearStashedNowPlayingPosition(
+    String itemId,
+    String? episodeId,
+  ) async {
+    if (!supportsStashedNowPlayingPosition(defaultTargetPlatform)) return;
+    try {
+      await _ensureAppGroupId();
+      final stashedItem = await HomeWidget.getWidgetData<String>('np_item_id');
+      if (stashedItem != itemId) return;
+      final stashedEpisode =
+          await HomeWidget.getWidgetData<String>('np_episode_id');
+      if (stashedEpisode != episodeId) return;
+      await HomeWidget.saveWidgetData<double>('np_position_s', 0.0);
+      debugPrint('[WidgetDebug] Cleared stashed position for $itemId ep=$episodeId');
+    } catch (e) {
+      debugPrint('[WidgetDebug] clearStashedNowPlayingPosition failed: $e');
+    }
+  }
+
   void dispose() {
     _progressTimer?.cancel();
     _statsTimer?.cancel();

@@ -875,10 +875,32 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
     notifyListeners();
   }
 
+  /// After "mark as not finished" lands on the server, which clears the
+  /// position there, drop the local copy too so the card and the next play
+  /// don't carry on from the old spot.
+  Future<void> markNotFinishedLocally(String itemId) async {
+    // A loaded player still holds the old position in memory and would sync
+    // it straight back on the next play, so let it go the way reset does.
+    final player = AudioPlayerService();
+    final loadedKey = player.currentEpisodeId != null
+        ? '${player.currentItemId}-${player.currentEpisodeId}'
+        : player.currentItemId;
+    if (loadedKey == itemId) await player.stopWithoutSaving();
+    await ProgressSyncService().deleteLocal(itemId);
+    resetProgressFor(itemId);
+  }
+
   void resetProgressFor(String itemId) {
     if (itemId.length > 36 && _progressMap[itemId]?['isFinished'] == true) {
       nudgeUnfinishedEpisodeCount(itemId.substring(0, 36), 1);
     }
+    // The widget stash is a third copy of the position, outside the scoped
+    // prefs. Left alone it wins the resume race and the first sync writes the
+    // old spot back to the server.
+    unawaited(HomeWidgetService().clearStashedNowPlayingPosition(
+      itemId.length > 36 ? itemId.substring(0, 36) : itemId,
+      itemId.length > 36 ? itemId.substring(37) : null,
+    ));
     _progressMap.remove(itemId);
     _localProgressOverrides.remove(itemId);
     _locallyFinishedItems.remove(itemId);

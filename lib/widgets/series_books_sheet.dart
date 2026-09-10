@@ -691,7 +691,7 @@ class _SeriesBooksSheetState extends State<SeriesBooksSheet> {
           ? (media['duration'] as num).toDouble()
           : 0.0;
       await api.markNotFinished(bookId, currentTime: 0, duration: duration);
-      lib.resetProgressFor(bookId);
+      await lib.markNotFinishedLocally(bookId);
       lib.clearAbsorbingBlock(bookId);
     }
 

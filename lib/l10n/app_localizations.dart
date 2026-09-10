@@ -5695,7 +5695,7 @@ abstract class AppLocalizations {
   /// No description provided for @markAsNotFinishedContent.
   ///
   /// In en, this message translates to:
-  /// **'This will clear the finished status but keep your current position.'**
+  /// **'This will clear the finished status and put your position back at the start.'**
   String get markAsNotFinishedContent;
 
   /// No description provided for @unmark.

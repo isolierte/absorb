@@ -2321,10 +2321,9 @@ class _BookDetailSheetContentState extends State<_BookDetailSheetContent> {
     if (api == null) return;
     try {
       await api.markNotFinished(widget.itemId, currentTime: currentTime, duration: duration);
-      await ProgressSyncService().deleteLocal(widget.itemId);
       if (context.mounted) {
         final lib = context.read<LibraryProvider>();
-        lib.resetProgressFor(widget.itemId);
+        await lib.markNotFinishedLocally(widget.itemId);
         lib.unblockFromAbsorbing(widget.itemId);
         await _loadItem();
         await lib.refresh();

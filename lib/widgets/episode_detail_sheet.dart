@@ -249,6 +249,7 @@ class _EpisodeDetailSheetState extends State<EpisodeDetailSheet> {
           duration: _duration,
           isFinished: false,
         );
+        await lib.markNotFinishedLocally(key);
         await lib.refresh();
         if (mounted) {
           showOverlayToast(

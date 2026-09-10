@@ -542,6 +542,7 @@ class _PodcastEpisodeFeedState extends State<PodcastEpisodeFeed> {
         duration: duration,
         isFinished: false,
       );
+      await lib.markNotFinishedLocally('$showId-$epId');
       await lib.refreshProgressOnly();
     } else {
       await api.updateEpisodeProgress(

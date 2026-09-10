@@ -1557,7 +1557,7 @@
   "markedAsFinishedNiceWork": "Marked as finished - nice work!",
   "failedToUpdateCheckConnection": "Failed to update - check your connection",
   "markAsNotFinishedQuestion": "Mark as Not Finished?",
-  "markAsNotFinishedContent": "This will clear the finished status but keep your current position.",
+  "markAsNotFinishedContent": "This will clear the finished status and put your position back at the start.",
   "unmark": "Unmark",
   "markedAsNotFinishedBackAtIt": "Marked as not finished - back at it!",
   "resetProgressQuestion": "Reset Progress?",
