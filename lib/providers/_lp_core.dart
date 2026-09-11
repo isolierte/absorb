@@ -1602,7 +1602,7 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
             if (newUpd <= savedAt) {
               debugPrint('[Sync] Ignoring remote position for paused player: '
                   'server ${serverTime.toStringAsFixed(1)}s ($newUpd) is older '
-                  'than this device's save ($savedAt)');
+                  'than what this phone saved ($savedAt)');
               return;
             }
             if (player.isPlaying) return;
