@@ -2985,7 +2985,19 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     for (var attempt = 0; attempt < maxProbes; attempt++) {
       final maxStart =
           (hi - _probeWindowSeconds) > lo ? hi - _probeWindowSeconds : lo;
-      final probeStart = (est - _probeWindowSeconds / 2).clamp(lo, maxStart);
+      var probeStart = (est - _probeWindowSeconds / 2).clamp(lo, maxStart);
+      // A chapter start is usually a file start too. A window centred on it
+      // begins in the previous file and gets cut at the boundary, so it only
+      // ever hears the end of the last chapter. Start at the boundary instead
+      // so the estimate is inside what gets transcribed.
+      final boundary = TranscriptionService.instance
+          .trackBoundaryBetween(widget.itemId, probeStart, est);
+      if (boundary != null) {
+        debugPrint('[FindAudio] probe#$attempt window start '
+            '${probeStart.toStringAsFixed(1)} -> file boundary '
+            '${boundary.toStringAsFixed(1)}');
+        probeStart = boundary.clamp(lo, maxStart > boundary ? maxStart : boundary);
+      }
 
       List<({double start, double end, String text})> segs;
       try {

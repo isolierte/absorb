@@ -535,6 +535,21 @@ class TranscriptionService {
 
   /// Per-track durations (seconds) from the cached offline session metadata,
   /// index-aligned with the downloaded track files. Null when unavailable.
+  /// The first track (file) boundary strictly after [from] and no later than
+  /// [upTo], or null. Windows never cross a file boundary, so a probe that
+  /// starts just before one is cut short and never hears what follows it.
+  double? trackBoundaryBetween(String itemId, double from, double upTo) {
+    final durations = _trackDurations(itemId);
+    if (durations == null || durations.length < 2) return null;
+    var acc = 0.0;
+    for (var i = 0; i < durations.length - 1; i++) {
+      acc += durations[i];
+      if (acc > from + 0.05 && acc <= upTo) return acc;
+      if (acc > upTo) break;
+    }
+    return null;
+  }
+
   List<double>? _trackDurations(String itemId) {
     final raw = DownloadService().getCachedSessionData(itemId);
     if (raw == null || raw.isEmpty) return null;
