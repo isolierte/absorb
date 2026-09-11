@@ -1502,8 +1502,12 @@ class CardActionDelegate {
   final VoidCallback? onRemoveExtra;
   final void Function(List<String>, int) onReorder;
   final bool isEbookPdf;
+  // An epub beside the audio turns the live transcript button into Read
+  // along: the reader lights the book's own words instead of a card overlay.
+  final bool isEbookEpub;
   final VoidCallback? onEbookTap;
   final VoidCallback? onFindInEbookTap;
+  final VoidCallback? onReadAlongTap;
 
   CardActionDelegate({
     required this.context,
@@ -1532,9 +1536,14 @@ class CardActionDelegate {
     this.onRemoveExtra,
     required this.onReorder,
     this.isEbookPdf = false,
+    this.isEbookEpub = false,
     this.onEbookTap,
     this.onFindInEbookTap,
+    this.onReadAlongTap,
   });
+
+  bool get _readAlongInstead =>
+      isEbookEpub && episodeId == null && onReadAlongTap != null;
 
   Map<String, dynamic> get _media => item['media'] as Map<String, dynamic>? ?? {};
 
@@ -1871,6 +1880,14 @@ class CardActionDelegate {
           onTap: () => onFindInEbookTap?.call(),
         );
       case 'lyrics':
+        if (_readAlongInstead) {
+          return CardWideButton(
+            icon: Icons.auto_stories_rounded,
+            label: l.readAlong,
+            accent: accent, isActive: true, alwaysEnabled: true, large: large, compact: compact, iconsOnly: iconsOnly,
+            onTap: () => onReadAlongTap?.call(),
+          );
+        }
         // Usable with nothing playing: the handler hot-loads this card's
         // book paused so the runway can build before the user presses play.
         return CardWideButton(
@@ -2064,6 +2081,16 @@ class CardActionDelegate {
           },
         );
       case 'lyrics':
+        if (_readAlongInstead) {
+          return MoreMenuItem(
+            icon: Icons.auto_stories_rounded,
+            label: l.readAlong, accent: accent,
+            onTap: () {
+              Navigator.pop(ctx);
+              onReadAlongTap?.call();
+            },
+          );
+        }
         return MoreMenuItem(
           icon: Icons.subtitles_rounded,
           label: l.lyricsMode, accent: accent,

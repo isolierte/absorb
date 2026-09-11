@@ -4635,6 +4635,8 @@
   "readerSideMargins": "Side margins",
   "readerTopBottom": "Top & bottom",
   "readerPageLayout": "Page layout",
+  "readerPinTopBar": "Keep the title and progress bar on screen",
+  "readerPinTopBarHint": "Pins them above the page instead of showing them on tap. The page gets a little shorter so no text is covered.",
   "readerLayoutAuto": "Auto",
   "readerLayoutSingle": "Single",
   "readerLayoutTwoPage": "Two-page",
@@ -4897,6 +4899,7 @@
   "readAlongFollowSentence": "Sentence",
   "readAlongColor": "Read along color",
   "readAlongLost": "Can't find the narration on the page",
+  "readAlongReady": "Read along is ready",
   "@readAlongLost": {
     "description": "Read along pill after 45s of narration that matches nothing on the page"
   },

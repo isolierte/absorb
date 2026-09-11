@@ -8048,6 +8048,13 @@ class AppLocalizationsJa extends AppLocalizations {
   String get readerPageLayout => 'Page layout';
 
   @override
+  String get readerPinTopBar => 'Keep the title and progress bar on screen';
+
+  @override
+  String get readerPinTopBarHint =>
+      'Pins them above the page instead of showing them on tap. The page gets a little shorter so no text is covered.';
+
+  @override
   String get readerLayoutAuto => 'Auto';
 
   @override
@@ -8713,6 +8720,9 @@ class AppLocalizationsJa extends AppLocalizations {
 
   @override
   String get readAlongLost => 'Can\'t find the narration on the page';
+
+  @override
+  String get readAlongReady => 'Read along is ready';
 
   @override
   String get findInEbook => 'Find in ebook';

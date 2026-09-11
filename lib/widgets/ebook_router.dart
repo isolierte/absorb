@@ -32,6 +32,7 @@ Future<void> openEbookReader(
   String? findText,
   String? findChapterHint,
   double? findPositionSeconds,
+  bool startReadAlong = false,
 }) async {
   final ext = ebookExt(ebookFile);
   final Widget viewer;
@@ -39,7 +40,7 @@ Future<void> openEbookReader(
     viewer = EbookReaderView(
         itemId: itemId, title: title, ebookFile: ebookFile, openAtCfi: openAtCfi,
         findText: findText, findChapterHint: findChapterHint,
-        findPositionSeconds: findPositionSeconds);
+        findPositionSeconds: findPositionSeconds, startReadAlong: startReadAlong);
   } else if (ext == 'pdf') {
     viewer = PdfReaderView(itemId: itemId, title: title, ebookFile: ebookFile);
   } else if (foliateEbookFormats.contains(ext)) {

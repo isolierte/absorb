@@ -13899,6 +13899,18 @@ abstract class AppLocalizations {
   /// **'Page layout'**
   String get readerPageLayout;
 
+  /// No description provided for @readerPinTopBar.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep the title and progress bar on screen'**
+  String get readerPinTopBar;
+
+  /// No description provided for @readerPinTopBarHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Pins them above the page instead of showing them on tap. The page gets a little shorter so no text is covered.'**
+  String get readerPinTopBarHint;
+
   /// No description provided for @readerLayoutAuto.
   ///
   /// In en, this message translates to:
@@ -15062,6 +15074,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Can\'t find the narration on the page'**
   String get readAlongLost;
+
+  /// No description provided for @readAlongReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Read along is ready'**
+  String get readAlongReady;
 
   /// No description provided for @findInEbook.
   ///

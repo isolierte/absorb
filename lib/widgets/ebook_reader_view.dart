@@ -70,6 +70,9 @@ class EbookReaderView extends StatefulWidget {
   /// The audio position [findText] was transcribed at, so a not-confident
   /// first pass can transcribe a longer window and retry.
   final double? findPositionSeconds;
+  /// Turn read along on as soon as the book is displayed, for the card's
+  /// Read along button.
+  final bool startReadAlong;
 
   const EbookReaderView({
     super.key,
@@ -80,6 +83,7 @@ class EbookReaderView extends StatefulWidget {
     this.findText,
     this.findChapterHint,
     this.findPositionSeconds,
+    this.startReadAlong = false,
   });
 
   @override
@@ -160,6 +164,14 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
   bool _transcriptionOn = false;
   // Read along: follow the audiobook by coloring the words being spoken.
   bool _readAlongOn = false;
+  bool _didAutoReadAlong = false;
+  // Listening ahead: the runway fills faster with the playhead standing
+  // still, and nobody wants to hear words the page can't show yet. Armed at
+  // start; the first gated tick pauses a playing book (resumed by itself
+  // when ready) or notes a paused one (a toast when ready).
+  bool _readAlongGateArmed = false;
+  bool _readAlongGatePaused = false;
+  bool _readAlongGateWaiting = false;
   Timer? _readAlongTimer;
   double? _readAlongLineStart;
   double _readAlongLineLastWord = 0;
@@ -205,6 +217,9 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
   // Page layout: auto shows two pages on wide screens (tablets), single forces
   // one page, two forces a spread. Stored as index 0=auto/1=single/2=two.
   EpubSpread _spread = EpubSpread.auto;
+  // Keep the title and progress bar on screen above the page instead of
+  // fading them in over it. The page gets shorter, never covered.
+  bool _pinTop = false;
   static const _spreadModes = [EpubSpread.auto, EpubSpread.none, EpubSpread.always];
   // E-reader background theme (empty = follow the app's light/dark) and font.
   String _themeId = '';
@@ -218,6 +233,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
   static const _kSpread = 'ereader_spread';
   static const _kTheme = 'ereader_theme';
   static const _kFont = 'ereader_font';
+  static const _kPinTop = 'ereader_pin_top';
 
   // Gates the WebView mount until the entering route animation completes, so
   // the heavy platform view doesn't stutter the open transition.
@@ -395,6 +411,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     _spread = _spreadModes[si];
     _themeId = await ScopedPrefs.getString(_kTheme) ?? '';
     _fontId = await ScopedPrefs.getString(_kFont) ?? 'original';
+    _pinTop = await ScopedPrefs.getBool(_kPinTop) ?? false;
     _volumeNavMode = await PlayerSettings.getEreaderVolumeNav();
     _volumeNavWhilePlaying = await PlayerSettings.getEreaderVolumeNavWhilePlaying();
     _autoScrollSpeed = (await PlayerSettings.getEreaderAutoScrollSpeed())
@@ -560,6 +577,20 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     // rebuild - no CSS re-apply needed.
     setState(() => _marginH = margin);
     await ScopedPrefs.setInt(_kMarginH, margin);
+  }
+
+  Future<void> _updatePinTop(bool on) async {
+    if (on == _pinTop) return;
+    // The WebView gets shorter or taller, so epub.js re-paginates and
+    // re-seats the current page on its own, like a side margin change. The
+    // blind's live line has to be found again on the new page.
+    setState(() => _pinTop = on);
+    await ScopedPrefs.setBool(_kPinTop, on);
+    if (_autoScroll) {
+      Future.delayed(const Duration(milliseconds: 500), () async {
+        if (mounted && _autoScroll) await _epubController?.autoScrollResync();
+      });
+    }
   }
 
   Future<void> _updateMarginV(int margin) async {
@@ -1532,7 +1563,18 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
                     },
                   ),
                 ),
-                const SizedBox(height: 16),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(l.readerPinTopBar, style: tt.bodyMedium),
+                  subtitle: Text(l.readerPinTopBarHint,
+                      style: tt.bodySmall?.copyWith(color: cs.onSurfaceVariant)),
+                  value: _pinTop,
+                  onChanged: (v) {
+                    setSheetState(() {});
+                    _updatePinTop(v);
+                  },
+                ),
+                const SizedBox(height: 8),
 
                 // Theme (background + text colors)
                 Row(children: [
@@ -3458,6 +3500,9 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     await wc?.evaluateJavascript(
         source: 'window.__absorbRA && __absorbRA.start()');
     if (mounted) setState(() => _readAlongOn = true);
+    _readAlongGateArmed = true;
+    _readAlongGatePaused = false;
+    _readAlongGateWaiting = false;
     // The first anchor may be behind the page you left the reader on.
     _readAlongAllowBack = true;
     _readAlongLastMatch = DateTime.now();
@@ -3610,6 +3655,18 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     _readAlongSeekAt = null;
     _readAlongLastMatch = null;
     _readAlongLost = false;
+    _readAlongGateArmed = false;
+    _readAlongGateWaiting = false;
+    // Leaving during the wait: put playback back the way it was found, or
+    // the book sits paused with nothing on screen to say why.
+    if (_readAlongGatePaused) {
+      _readAlongGatePaused = false;
+      final player = AudioPlayerService();
+      if (!player.isPlaying && player.currentItemId == widget.itemId) {
+        debugPrint('[ReadAlong] stopped while paused for the runway, resuming');
+        unawaited(player.play(logDetail: 'read along stopped', fromUi: true));
+      }
+    }
     LyricsService.instance.readerOwns = false;
     if (!_autoScroll) ScreenWake.keepOn(false);
     if (_readAlongStartedPipeline) {
@@ -3641,7 +3698,36 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     }
     // Same runway gate as the live transcript: painting before it is banked
     // means the first stall leaves the page stuck on a stale sentence.
-    if (svc.gateProgress != null) return;
+    if (svc.gateProgress != null) {
+      if (_readAlongGateArmed) {
+        _readAlongGateArmed = false;
+        if (player.isPlaying) {
+          _readAlongGatePaused = true;
+          debugPrint('[ReadAlong] pausing while the runway builds');
+          await player.pause();
+        } else {
+          _readAlongGateWaiting = true;
+        }
+      } else if (_readAlongGatePaused && player.isPlaying) {
+        // Pressed play during the wait: their call, don't touch it again.
+        _readAlongGatePaused = false;
+      }
+      return;
+    }
+    _readAlongGateArmed = false;
+    if (_readAlongGatePaused) {
+      _readAlongGatePaused = false;
+      if (!player.isPlaying) {
+        debugPrint('[ReadAlong] runway ready, resuming');
+        await player.play(logDetail: 'read along ready', fromUi: true);
+      }
+    } else if (_readAlongGateWaiting) {
+      _readAlongGateWaiting = false;
+      if (!player.isPlaying && mounted) {
+        showOverlayToast(context, AppLocalizations.of(context)!.readAlongReady,
+            icon: Icons.auto_stories_rounded);
+      }
+    }
     final pos = player.position.inMilliseconds / 1000.0;
     // Same sync offset the player uses, so headphones don't run the reader's
     // coloring ahead of the voice either.
@@ -4264,13 +4350,96 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
   EdgeInsets? _viewerPadding;
   Size? _viewerPaddingSize;
 
+  Widget _buildTopBarContent(Color fg, Color fgDim, Color accent) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            widget.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: fg,
+              fontWeight: FontWeight.w600,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: _progress.clamp(0.0, 1.0),
+              minHeight: 3,
+              backgroundColor: fg.withValues(alpha: 0.1),
+              valueColor: AlwaysStoppedAnimation(accent),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              if (_chapterPageTotal > 0)
+                Text(
+                  '$_chapterPage / $_chapterPageTotal',
+                  style: TextStyle(color: fgDim, fontSize: 11),
+                ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    _currentChapterTitle ?? '',
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: fgDim, fontSize: 11),
+                  ),
+                ),
+              ),
+              Text(
+                '${(_progress * 100).toStringAsFixed(1)}%',
+                style: TextStyle(color: fgDim, fontSize: 11),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The page on its own, or under the always-visible bar when pinned. The
+  /// bar takes the frozen cutout padding (not a live SafeArea) so the system
+  /// bars flashing in during a recents swipe can't resize the WebView.
+  Widget _withPinnedTopBar(
+      Color bg, Color fg, Color fgDim, Color accent, Widget viewerArea) {
+    // Same column in both modes, with an empty slot when the bar is off. If
+    // the tree around the viewer changed shape, Flutter would recreate the
+    // WebView and the book would reopen at the start with its handlers gone.
+    final frozen = _frozenViewerPadding();
+    return Column(
+      children: [
+        if (_pinTop)
+          Container(
+            color: bg,
+            padding: EdgeInsets.only(
+                top: frozen.top, left: frozen.left, right: frozen.right),
+            child: _buildTopBarContent(fg, fgDim, accent),
+          )
+        else
+          const SizedBox.shrink(),
+        Expanded(child: viewerArea),
+      ],
+    );
+  }
+
   /// Padded with the frozen safe-area padding above so the page never slides
   /// under the camera cutout but also never resizes when the system bars flash
   /// back in. Side margins are applied here (horizontal padding shrinks the
   /// WebView so epub.js paginates into the narrower box) - epub.js's column
   /// layout ignores horizontal body padding, so CSS only handles the vertical
   /// margins.
-  Widget _buildViewerArea(Widget viewer) {
+  EdgeInsets _frozenViewerPadding() {
     final size = MediaQuery.sizeOf(context);
     final pad = MediaQuery.paddingOf(context);
     final prev = _viewerPadding;
@@ -4285,8 +4454,15 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
         bottom: min(prev.bottom, pad.bottom),
       );
     }
+    return _viewerPadding!;
+  }
+
+  Widget _buildViewerArea(Widget viewer) {
+    final frozen = _frozenViewerPadding();
+    // With the bar pinned above the page, the bar already clears the cutout.
+    final padding = _pinTop ? frozen.copyWith(top: 0) : frozen;
     return Padding(
-      padding: _viewerPadding!,
+      padding: padding,
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: _marginH.toDouble()),
         child: LayoutBuilder(
@@ -4466,8 +4642,11 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     // EpubViewer + overlays, each wrapped in a SafeArea for camera cutouts.
     final viewerBody = Stack(
       children: [
-          // Epub viewer with safe area padding for camera cutouts
-          _buildViewerArea(EpubViewer(
+          // Epub viewer with safe area padding for camera cutouts. With the
+          // bar pinned, it is a shorter box under the bar rather than a full
+          // page with the bar over it, so nothing the page shows is hidden
+          // and read along and auto scroll measure the page they can see.
+          _withPinnedTopBar(bg, fg, fgDim, accent, _buildViewerArea(EpubViewer(
               key: ValueKey(_viewerKey),
               epubSource: EpubSource.fromFile(_cachedFile!),
               epubController: _epubController!,
@@ -4553,6 +4732,12 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
                   _setupFontInjector();
                   _applyFontFace();
                 }
+                if (widget.startReadAlong && !_didAutoReadAlong) {
+                  _didAutoReadAlong = true;
+                  Future.delayed(const Duration(milliseconds: 900), () {
+                    if (mounted && !_readAlongOn) _toggleReadAlong();
+                  });
+                }
                 final findText = widget.findText;
                 if (findText != null && findText.isNotEmpty && !_didStartFind) {
                   _didStartFind = true;
@@ -4605,89 +4790,37 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
                 if (dx > 0.05 || dy > 0.05) return;
                 _readerTapAt(x, 'touch');
               },
-          )),
+          ))),
 
           // Top overlay: what you are reading and how far in. Controls live
-          // at the bottom now, in thumb reach.
-          AnimatedOpacity(
-            opacity: _showControls ? 1.0 : 0.0,
-            duration: const Duration(milliseconds: 200),
-            child: IgnorePointer(
-              ignoring: !_showControls,
-              child: Container(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      bg.withValues(alpha: 1.0),
-                      bg.withValues(alpha: 1.0),
-                      bg.withValues(alpha: 0.0),
-                    ],
-                    stops: const [0.0, 0.86, 1.0],
-                  ),
-                ),
-                child: SafeArea(
-                  bottom: false,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          widget.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: fg,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(2),
-                          child: LinearProgressIndicator(
-                            value: _progress.clamp(0.0, 1.0),
-                            minHeight: 3,
-                            backgroundColor: fg.withValues(alpha: 0.1),
-                            valueColor: AlwaysStoppedAnimation(accent),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            if (_chapterPageTotal > 0)
-                              Text(
-                                '$_chapterPage / $_chapterPageTotal',
-                                style: TextStyle(color: fgDim, fontSize: 11),
-                              ),
-                            Expanded(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 8),
-                                child: Text(
-                                  _currentChapterTitle ?? '',
-                                  textAlign: TextAlign.center,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(color: fgDim, fontSize: 11),
-                                ),
-                              ),
-                            ),
-                            Text(
-                              '${(_progress * 100).toStringAsFixed(1)}%',
-                              style: TextStyle(color: fgDim, fontSize: 11),
-                            ),
-                          ],
-                        ),
+          // at the bottom now, in thumb reach. Pinned, it sits above the page
+          // in the column built below instead of fading in over it.
+          if (!_pinTop)
+            AnimatedOpacity(
+              opacity: _showControls ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: IgnorePointer(
+                ignoring: !_showControls,
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        bg.withValues(alpha: 1.0),
+                        bg.withValues(alpha: 1.0),
+                        bg.withValues(alpha: 0.0),
                       ],
+                      stops: const [0.0, 0.86, 1.0],
                     ),
+                  ),
+                  child: SafeArea(
+                    bottom: false,
+                    child: _buildTopBarContent(fg, fgDim, accent),
                   ),
                 ),
               ),
             ),
-          ),
 
           // Bottom overlay: every control, centred and within thumb reach.
           Positioned(

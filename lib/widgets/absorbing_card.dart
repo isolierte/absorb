@@ -1216,6 +1216,22 @@ class AbsorbingCardState extends State<AbsorbingCard> with AutomaticKeepAliveCli
     openEbookReader(context, itemId: _itemId, title: _title, ebookFile: ebookFile);
   }
 
+  void _openReadAlong() async {
+    var ebookFile = _ebookFile;
+    ebookFile ??= await cachedEbookFileFor(_itemId);
+    if (ebookFile == null) {
+      await _fetchChaptersIfNeeded();
+      ebookFile = _ebookFile;
+    }
+    if (!mounted) return;
+    if (ebookFile == null) {
+      showOverlayToast(context, AppLocalizations.of(context)!.noEbookFileFound, icon: Icons.menu_book_outlined);
+      return;
+    }
+    openEbookReader(context, itemId: _itemId, title: _title, ebookFile: ebookFile,
+        startReadAlong: true);
+  }
+
   void _findInEbook() async {
     var ebookFile = _ebookFile;
     ebookFile ??= await cachedEbookFileFor(_itemId);
@@ -1360,8 +1376,10 @@ class AbsorbingCardState extends State<AbsorbingCard> with AutomaticKeepAliveCli
       PlayerSettings.setCardButtonVisibleCount(newCount);
     },
     isEbookPdf: _ebookExt == 'pdf',
+    isEbookEpub: _ebookExt == 'epub',
     onEbookTap: _openEbookReader,
     onFindInEbookTap: _findInEbook,
+    onReadAlongTap: _openReadAlong,
   );
 
   int get _visibleButtonCount => _buttonVisibleCount;

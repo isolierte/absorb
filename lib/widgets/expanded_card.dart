@@ -1233,8 +1233,10 @@ class _ExpandedCardState extends State<ExpandedCard> {
       PlayerSettings.setCardButtonVisibleCount(newCount);
     },
     isEbookPdf: _ebookExt == 'pdf',
+    isEbookEpub: _ebookExt == 'epub',
     onEbookTap: _openReader,
     onFindInEbookTap: _findInEbook,
+    onReadAlongTap: _openReadAlong,
   );
 
   Map<String, dynamic>? get _ebookFile =>
@@ -1263,6 +1265,24 @@ class _ExpandedCardState extends State<ExpandedCard> {
       return;
     }
     openEbookReader(context, itemId: _itemId, title: _title, ebookFile: ef);
+  }
+
+  void _openReadAlong() async {
+    var ef = _ebookFile;
+    ef ??= await cachedEbookFileFor(_itemId);
+    if (ef == null) {
+      await _fetchChaptersIfNeeded();
+      ef = _ebookFile;
+    }
+    if (!mounted) return;
+    if (ef == null) {
+      showOverlayToast(context, AppLocalizations.of(context)!.noEbookFileFound, icon: Icons.menu_book_outlined);
+      return;
+    }
+    // The reader checks the rest: loads this book if something else is
+    // playing, the transcription setting, the download prompt.
+    openEbookReader(context, itemId: _itemId, title: _title, ebookFile: ef,
+        startReadAlong: true);
   }
 
   void _findInEbook() async {
