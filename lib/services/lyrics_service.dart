@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
@@ -331,9 +332,21 @@ class LyricsService extends ChangeNotifier {
     // holds a line through the short silences Whisper's VAD trims out.
     // The lead is in book-seconds, so scale it by playback speed to keep the
     // same wall-clock feel at 1.5x or 2x.
-    final line = _gatePassed
-        ? TranscriptLineStore.instance.lineNear(key, heard + 0.35 * speed)
+    // A small lead matched to the word timing and almost no pre-show: a line
+    // arriving a beat early cut the last word of every sentence short. A
+    // following line also waits until the current one's last word has had
+    // its turn.
+    var line = _gatePassed
+        ? TranscriptLineStore.instance
+            .lineNear(key, heard + 0.15 * speed, preShow: 0.15)
         : null;
+    final cur = _current;
+    if (line != null && cur != null && line.start > cur.start) {
+      final lastWord = cur.wordStarts.isNotEmpty
+          ? math.min(cur.end, cur.wordStarts.last + 0.35)
+          : cur.end - 0.1;
+      if (heard < lastWord) line = cur;
+    }
     var changed = line?.start != _current?.start || line?.text != _current?.text;
     _current = line;
     // Previews have guessed timing - a moving word highlight on them would

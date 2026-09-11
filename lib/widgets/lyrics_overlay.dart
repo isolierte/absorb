@@ -104,26 +104,6 @@ class _LyricsOverlayState extends State<LyricsOverlay> {
         shadows: [Shadow(blurRadius: 6, color: _halo)],
       );
 
-  /// The line, with the word being spoken in the read-along color and the
-  /// rest of it a shade back. Falls back to plain text when the line has no
-  /// word timing (older cached lines) or word tracking is off.
-  InlineSpan _lineSpan(LyricsService svc, String line) {
-    final index = svc.currentWordIndex;
-    final words = svc.current?.words ?? const <String>[];
-    if (index < 0 || index >= words.length) return TextSpan(text: line);
-    final accent =
-        readableOn(Color(svc.readAlongColor), widget.surface ?? Colors.black);
-    final rest = _ink.withValues(alpha: 0.8);
-    return TextSpan(
-      children: [
-        for (var i = 0; i < words.length; i++)
-          TextSpan(
-            text: i == words.length - 1 ? words[i] : '${words[i]} ',
-            style: TextStyle(color: i == index ? accent : rest),
-          ),
-      ],
-    );
-  }
 
   /// Must match how the page's Text widgets actually render, or _fit packs
   /// more lines than the page can hold and the bottom one gets clipped -
@@ -140,14 +120,33 @@ class _LyricsOverlayState extends State<LyricsOverlay> {
     return tp.height;
   }
 
-  Widget _spoken(LyricsService svc, String text, double size, {int? maxLines}) =>
-      Text.rich(
-        _lineSpan(svc, text),
+  /// The spoken line. Words already heard are in the read-along color, the
+  /// one being spoken rolls into it from the left, the rest wait a shade
+  /// back. Plain text when the line has no word timing (older cached lines)
+  /// or word tracking is off.
+  Widget _spoken(LyricsService svc, String text, double size, {int? maxLines}) {
+    final style = _base(size).copyWith(color: _ink);
+    final index = svc.currentWordIndex;
+    final words = svc.current?.words ?? const <String>[];
+    if (index < 0 || index >= words.length) {
+      return Text(
+        text,
         textAlign: TextAlign.center,
         maxLines: maxLines,
         overflow: maxLines == null ? TextOverflow.clip : TextOverflow.ellipsis,
-        style: _base(size).copyWith(color: _ink),
+        style: style,
       );
+    }
+    return _RollingLine(
+      key: ValueKey('roll-${svc.current?.start}'),
+      words: words,
+      index: index,
+      accent: readableOn(Color(svc.readAlongColor), widget.surface ?? Colors.black),
+      rest: _ink.withValues(alpha: 0.8),
+      style: style,
+      maxLines: maxLines,
+    );
+  }
 
   Widget _quiet(String text, double size) => Text(
         text,
@@ -377,7 +376,7 @@ class _LyricsOverlayState extends State<LyricsOverlay> {
       animation: LyricsService.instance,
       builder: (context, _) {
         final svc = LyricsService.instance;
-        if (!svc.isOn) return const SizedBox.shrink();
+        if (!svc.isOn || svc.readerOwns) return const SizedBox.shrink();
         if (widget.forKey != null && svc.activeKey != widget.forKey) {
           return const SizedBox.shrink();
         }
@@ -497,5 +496,127 @@ class _LyricsOverlayState extends State<LyricsOverlay> {
         );
       },
     );
+  }
+}
+
+/// A line of words as plain text runs - so it lays out exactly like the
+/// quiet lines around it - with the color roll painted over the top: a
+/// second copy of the line, transparent except for the current word, masked
+/// to reveal left to right across that word's measured box.
+class _RollingLine extends StatefulWidget {
+  const _RollingLine({
+    super.key,
+    required this.words,
+    required this.index,
+    required this.accent,
+    required this.rest,
+    required this.style,
+    this.maxLines,
+  });
+
+  final List<String> words;
+  final int index;
+  final Color accent;
+  final Color rest;
+  final TextStyle style;
+  final int? maxLines;
+
+  @override
+  State<_RollingLine> createState() => _RollingLineState();
+}
+
+class _RollingLineState extends State<_RollingLine>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  )..forward();
+
+  @override
+  void didUpdateWidget(_RollingLine old) {
+    super.didUpdateWidget(old);
+    if (old.index != widget.index) _c.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  String _piece(int i) =>
+      i == widget.words.length - 1 ? widget.words[i] : '${widget.words[i]} ';
+
+  @override
+  Widget build(BuildContext context) {
+    final overflow =
+        widget.maxLines == null ? TextOverflow.clip : TextOverflow.ellipsis;
+    final under = Text.rich(
+      TextSpan(children: [
+        for (var i = 0; i < widget.words.length; i++)
+          TextSpan(
+            text: _piece(i),
+            style: TextStyle(color: i < widget.index ? widget.accent : widget.rest),
+          ),
+      ]),
+      textAlign: TextAlign.center,
+      maxLines: widget.maxLines,
+      overflow: overflow,
+      style: widget.style,
+    );
+    final over = Text.rich(
+      TextSpan(children: [
+        for (var i = 0; i < widget.words.length; i++)
+          TextSpan(
+            text: _piece(i),
+            style: TextStyle(
+                color: i == widget.index ? widget.accent : Colors.transparent),
+          ),
+      ]),
+      textAlign: TextAlign.center,
+      maxLines: widget.maxLines,
+      overflow: overflow,
+      style: widget.style.copyWith(shadows: const []),
+    );
+    return LayoutBuilder(builder: (context, constraints) {
+      // Where the current word sits, measured the same way the text lays out.
+      var start = 0;
+      for (var i = 0; i < widget.index; i++) {
+        start += widget.words[i].length + 1;
+      }
+      final end = start + widget.words[widget.index].length;
+      final tp = TextPainter(
+        text: TextSpan(text: widget.words.join(' '), style: widget.style),
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+        maxLines: widget.maxLines,
+        ellipsis: widget.maxLines == null ? null : '…',
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout(maxWidth: constraints.maxWidth);
+      final boxes = tp.getBoxesForSelection(
+          TextSelection(baseOffset: start, extentOffset: end));
+      final box = boxes.isEmpty ? null : boxes.first;
+      final width = tp.width <= 0 ? 1.0 : tp.width;
+      return AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          final t = Curves.easeOut.transform(_c.value);
+          final left = box == null ? 0.0 : (box.left / width).clamp(0.0, 1.0);
+          final right = box == null ? 1.0 : (box.right / width).clamp(0.0, 1.0);
+          final reveal = box == null ? 1.0 : left + t * (right - left);
+          return Stack(children: [
+            under,
+            ShaderMask(
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (rect) => LinearGradient(
+                colors: const [Colors.white, Colors.white, Colors.transparent, Colors.transparent],
+                stops: [0, reveal, reveal, 1],
+              ).createShader(rect),
+              child: over,
+            ),
+          ]);
+        },
+      );
+    });
   }
 }
