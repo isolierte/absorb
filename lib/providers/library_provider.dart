@@ -126,6 +126,10 @@ class LibraryProvider extends ChangeNotifier
         // or empty sections. Refresh once on each transition.
         if (_lastUseLocalServer != null && _lastUseLocalServer != auth.useLocalServer) {
           _lastUseLocalServer = auth.useLocalServer;
+          // The player follows the address even while the library thinks it
+          // is offline - that is exactly when the switch tends to happen.
+          final switchedApi = auth.apiService;
+          if (switchedApi != null) AudioPlayerService().useApi(switchedApi);
           if (!_networkOffline && !_manualOffline) {
             debugPrint('[Library] Active server switched - refreshing library data');
             AudioPlayerService().resetServerSyncBackoff();

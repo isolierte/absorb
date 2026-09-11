@@ -6261,6 +6261,19 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
+  /// The active server address changed under a loaded book (local to remote
+  /// or back). Sync, session pushes and the offline flush all go through
+  /// [_api], which until now stayed on the address play started with - so
+  /// after leaving WiFi every push went to a LAN address for as long as the
+  /// book kept playing.
+  void useApi(ApiService api) {
+    final current = _api;
+    if (current == null || identical(current, api)) return;
+    if (current.cleanBaseUrl == api.cleanBaseUrl) return;
+    debugPrint('[Player] Sync now goes to ${api.cleanBaseUrl}');
+    _api = api;
+  }
+
   /// Forget any sync backoff so the next tick pushes progress right away.
   /// Called when the network comes back or the active server changes.
   void resetServerSyncBackoff() {

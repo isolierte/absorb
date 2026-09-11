@@ -1537,6 +1537,11 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
         final localUpd =
             ((_progressMap[key]?['lastUpdate']) as num?)?.toInt() ?? 0;
         if (serverUpd <= localUpd) continue;
+        // What this device saved itself counts too, not just the last
+        // server value it happened to see - otherwise a reconnect after an
+        // offline stretch replays the server's pre-outage position over it.
+        final savedAt = await ProgressSyncService().getSavedTimestamp(key);
+        if (serverUpd <= savedAt) continue;
         _onRemoteProgressUpdated(mp);
         applied++;
       }
@@ -1586,13 +1591,29 @@ mixin _CoreMixin on ChangeNotifier, _StateMixin {
             newUpd > prevUpd &&
             !player.isPlaying &&
             !ChromecastService().isCasting) {
-          final posS = player.position.inMilliseconds / 1000.0;
-          if ((serverTime - posS).abs() > 5.0) {
-            debugPrint('[Sync] Adopting newer remote position for paused player: '
-                '${posS.toStringAsFixed(1)}s -> ${serverTime.toStringAsFixed(1)}s');
-            unawaited(player.seekTo(
-                Duration(milliseconds: (serverTime * 1000).round())));
-          }
+          // "Newer than the last server value we saw" is not "newer than
+          // where this phone got to": after an hour offline the server still
+          // holds the position from before the outage, and adopting it drags
+          // the paused player back and then syncs that old spot up over the
+          // real one. The position saved here carries its own timestamp.
+          unawaited(() async {
+            final savedAt =
+                await ProgressSyncService().getSavedTimestamp(key);
+            if (newUpd <= savedAt) {
+              debugPrint('[Sync] Ignoring remote position for paused player: '
+                  'server ${serverTime.toStringAsFixed(1)}s ($newUpd) is older '
+                  'than this device's save ($savedAt)');
+              return;
+            }
+            if (player.isPlaying) return;
+            final posS = player.position.inMilliseconds / 1000.0;
+            if ((serverTime - posS).abs() > 5.0) {
+              debugPrint('[Sync] Adopting newer remote position for paused player: '
+                  '${posS.toStringAsFixed(1)}s -> ${serverTime.toStringAsFixed(1)}s');
+              await player.seekTo(
+                  Duration(milliseconds: (serverTime * 1000).round()));
+            }
+          }());
         }
         notifyListeners();
       }
