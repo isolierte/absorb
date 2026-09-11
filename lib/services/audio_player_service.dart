@@ -2924,6 +2924,11 @@ class AudioPlayerService extends ChangeNotifier {
     }
   }
 
+  /// Public view of the BT check, for callers that need to compensate for
+  /// the delay Bluetooth adds between the playhead and your ears.
+  static Future<bool> isBluetoothAudioConnected() =>
+      _isBluetoothAudioConnected();
+
   /// True when BT/headphones just disconnected — callers can check before
   /// starting new playback to avoid blasting audio on the phone speaker.
   static bool get wasNoisyPause => _noisyPause;
@@ -3438,8 +3443,9 @@ class AudioPlayerService extends ChangeNotifier {
     bool fromUi = false,
     // Load the item into the player at its resume position but leave it
     // paused, with no playback session: a headset press then always has a
-    // live target, without deciding for the user that audio starts now.
-    // Downloaded items only - a streamed item plays normally.
+    // live target and the live transcript can build its runway, without
+    // deciding for the user that audio starts now. Downloaded items only -
+    // a streamed item plays normally.
     bool loadOnly = false,
   }) async {
     _pauseRequested = false;
@@ -4203,9 +4209,9 @@ class AudioPlayerService extends ChangeNotifier {
       await EqualizerService().switchItem(speedKey);
       if (loadOnly) {
         // Loaded and idle at the resume position: the lock screen shows the
-        // book paused and a headset press has a live target, but nothing
-        // plays and no session exists until the user presses play - the
-        // normal play() path creates the session then.
+        // book paused, a headset press has a live target, and the transcript
+        // can build its runway - but nothing plays and no session exists
+        // until the user presses play, which creates the session then.
         debugPrint('[Player] Loaded paused (no session) at '
             '${startTime.toStringAsFixed(0)}s');
         _pendingLoadOnlySession = (

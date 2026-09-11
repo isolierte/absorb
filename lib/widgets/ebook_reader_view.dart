@@ -13,6 +13,7 @@ import '../l10n/app_localizations.dart';
 import '../providers/auth_provider.dart';
 import '../providers/library_provider.dart';
 import '../screens/app_shell.dart';
+import '../services/api_service.dart';
 import '../services/audio_player_service.dart';
 import '../services/ebook_annotation_service.dart';
 import '../services/ebook_cache.dart';
@@ -20,10 +21,14 @@ import '../services/find_in_ebook.dart';
 import '../services/progress_sync_service.dart';
 import '../services/reader_font_service.dart';
 import '../services/scoped_prefs.dart';
+import '../services/lyrics_service.dart';
+import '../services/read_along_script.dart';
 import '../services/screen_wake.dart';
+import '../services/transcript_line_store.dart';
 import '../services/transcription_service.dart';
 import '../services/volume_key_service.dart';
 import 'overlay_toast.dart';
+import 'transcription_download_prompt.dart';
 import 'progress_dialog.dart';
 import 'quote_share_sheet.dart';
 import 'card_buttons.dart' show CardSpeedSheet;
@@ -153,6 +158,35 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
   bool _finding = false;
   // Shows the Find-in-audiobook action on the selection toolbar.
   bool _transcriptionOn = false;
+  // Read along: follow the audiobook by coloring the words being spoken.
+  bool _readAlongOn = false;
+  Timer? _readAlongTimer;
+  double? _readAlongLineStart;
+  double _readAlongLineLastWord = 0;
+  int _readAlongColor = PlayerSettings.defaultReadAlongColor;
+  String _readAlongMode = 'word';
+  // Words in the sentence as the page spells it, and as the transcript line
+  // does - the two can differ, so word positions are scaled between them.
+  int _readAlongPageWords = 0;
+  int _readAlongLineWords = 0;
+  int _readAlongWordIndex = -1;
+  // Where the current sentence sits in the page text, so the next lookup can
+  // prefer a match ahead of it rather than an earlier repeat of the phrase.
+  int _readAlongAt = -1;
+  double _readAlongLastPos = 0;
+  DateTime _readAlongLastScan = DateTime.fromMillisecondsSinceEpoch(0);
+  // Guards against turning the page twice for the same spot.
+  DateTime _readAlongLastTurn = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _readAlongStartedPipeline = false;
+  bool _readAlongLocating = false;
+  bool _readAlongAllowBack = false;
+  DateTime? _readAlongTurnPending;
+  DateTime? _readAlongMissSince;
+  bool _readAlongStepped = false;
+  DateTime? _readAlongSeekAt;
+  DateTime? _readAlongLastMatch;
+  bool _readAlongLost = false;
+  DateTime _readAlongOffPageLog = DateTime.fromMillisecondsSinceEpoch(0);
 
   // Reader settings
   int _fontSize = 16;
@@ -233,8 +267,8 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
   // Volume-key turns are ignored while auto scroll runs: the blind is already
   // showing the next page, and a turn underneath it leaves that page unread.
   late final EreaderVolumeNav _volumeNav = EreaderVolumeNav(
-    onPrev: () { if (!_autoScroll) _epubController?.prev(); },
-    onNext: () { if (!_autoScroll) _epubController?.next(); },
+    onPrev: () { if (!_autoScroll && !_readAlongOn) _epubController?.prev(); },
+    onNext: () { if (!_autoScroll && !_readAlongOn) _epubController?.next(); },
   );
 
   @override
@@ -260,9 +294,19 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
           if (_autoScroll) await _epubController?.autoScrollResync();
         });
       }
-    } else {
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
       // Leaving the foreground: snapshot the real page and stop trusting
       // relocations until we're back (they'll be resize artifacts).
+      if (_readerActive) _bgCfi = _currentCfi;
+      _readerActive = false;
+      // Following along costs transcription and a WebView call several times
+      // a second, and nobody is reading a page they can't see.
+      if (_readAlongOn) {
+        debugPrint('[ReadAlong] app backgrounded - stopping');
+        _stopReadAlong();
+      }
+    } else {
       if (_readerActive) _bgCfi = _currentCfi;
       _readerActive = false;
     }
@@ -526,6 +570,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
 
   @override
   void dispose() {
+    _stopReadAlong();
     _speedToast?.dismiss();
     if (_autoScroll) {
       _epubController?.autoScrollStop();
@@ -582,7 +627,12 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
       return;
     }
     _lastReaderTap = now;
-    final action = frac < 0.25 ? 'prev' : (frac > 0.75 ? 'next' : 'menu');
+    // Read along owns the page: a turn underneath it would only be pulled
+    // back to the narration. Every tap reaches the controls instead, so the
+    // button to switch it off is always one tap away.
+    final action = _readAlongOn
+        ? 'menu'
+        : (frac < 0.25 ? 'prev' : (frac > 0.75 ? 'next' : 'menu'));
     debugPrint('[ReaderTap] frac=${frac.toStringAsFixed(2)} src=$source -> $action ctrl=${_epubController != null}');
     final hasHighlights =
         _annotations.any((a) => a.type == AnnotationType.highlight);
@@ -731,18 +781,55 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     }
   }
 
+  DateTime _ebookPushAt = DateTime.fromMillisecondsSinceEpoch(0);
+  (String, double)? _ebookPushPending;
+  Timer? _ebookPushTimer;
+  ApiService? _ebookPushApi;
+
   void _syncProgress(String cfi, double progress) {
     final auth = context.read<AuthProvider>();
     final api = auth.apiService;
     if (api == null) return;
+    _ebookPushApi = api;
+    context.read<LibraryProvider>().applyLocalEbookProgress(
+      widget.itemId, location: cfi, progress: progress);
+    // Read along turns the pages itself, several times a minute and in
+    // bursts while a page settles. One server write every 15s is plenty for
+    // that; the latest position wins and whatever is pending goes out when
+    // read along stops.
+    if (_readAlongOn) {
+      _ebookPushPending = (cfi, progress);
+      final since = DateTime.now().difference(_ebookPushAt);
+      if (since < const Duration(seconds: 15)) {
+        _ebookPushTimer ??=
+            Timer(const Duration(seconds: 15) - since, _flushEbookPush);
+        return;
+      }
+      _ebookPushPending = null;
+    }
+    _ebookPushAt = DateTime.now();
     ProgressSyncService().pushEbookProgress(
       api,
       widget.itemId,
       location: cfi,
       progress: progress,
     );
-    context.read<LibraryProvider>().applyLocalEbookProgress(
-      widget.itemId, location: cfi, progress: progress);
+  }
+
+  void _flushEbookPush() {
+    _ebookPushTimer?.cancel();
+    _ebookPushTimer = null;
+    final pending = _ebookPushPending;
+    final api = _ebookPushApi;
+    if (pending == null || api == null) return;
+    _ebookPushPending = null;
+    _ebookPushAt = DateTime.now();
+    ProgressSyncService().pushEbookProgress(
+      api,
+      widget.itemId,
+      location: pending.$1,
+      progress: pending.$2,
+    );
   }
 
   Future<void> _loadAnnotations() async {
@@ -1297,6 +1384,8 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     // Live preview for the side-margin slider so the WebView only re-paginates
     // when the drag ends, not on every step.
     int hPreview = _marginH;
+    var sheetRaMode = LyricsService.instance.readAlongMode;
+    var sheetRaColor = LyricsService.instance.readAlongColor;
     showModalBottomSheet(
       context: context,
       backgroundColor: cs.surface,
@@ -1490,6 +1579,57 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
                 ),
                 const SizedBox(height: 16),
 
+                // Read along, mirrored from the transcription settings so the
+                // reader can change them without leaving the book.
+                if (_transcriptionOn) ...[
+                  Row(children: [
+                    Icon(Icons.graphic_eq_rounded, size: 20, color: cs.onSurfaceVariant),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(l.readAlong, style: tt.bodyMedium)),
+                  ]),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: SegmentedButton<String>(
+                      segments: [
+                        ButtonSegment(value: 'word', label: Text(l.readAlongFollowWord)),
+                        ButtonSegment(value: 'sentence', label: Text(l.readAlongFollowSentence)),
+                      ],
+                      selected: {sheetRaMode},
+                      showSelectedIcon: false,
+                      onSelectionChanged: (sel) async {
+                        setSheetState(() => sheetRaMode = sel.first);
+                        await PlayerSettings.setReadAlongMode(sel.first);
+                        await LyricsService.instance.reloadDisplayPrefs();
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(spacing: 10, runSpacing: 10, children: [
+                    for (final c in PlayerSettings.readAlongPalette)
+                      GestureDetector(
+                        onTap: () async {
+                          setSheetState(() => sheetRaColor = c);
+                          await PlayerSettings.setReadAlongColor(c);
+                          await LyricsService.instance.reloadDisplayPrefs();
+                        },
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: Color(c),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: sheetRaColor == c ? cs.onSurface : Colors.transparent,
+                              width: 2,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ]),
+                  const SizedBox(height: 16),
+                ],
+
                 // Volume keys turn pages (normal: up = previous, down = next)
                 Row(children: [
                   Icon(Icons.swap_vert_rounded, size: 20, color: cs.onSurfaceVariant),
@@ -1645,6 +1785,8 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
       });
       return;
     }
+    // Read along and the blind both move the page; only one runs at a time.
+    if (_readAlongOn) _stopReadAlong();
     // The blind can't start before the book is displayed. Flagging auto
     // scroll on regardless left the reader with its taps swallowed and no
     // bars to reach this button again.
@@ -2387,51 +2529,54 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
 
     // Set expectations (it listens for a while, a bad match moves nothing) and
     // let the user pick where a successful find lands. Choice is remembered.
-    var goToPlayer = await PlayerSettings.getFindInAudiobookGoToPlayer();
+    var after = await PlayerSettings.getFindInAudiobookAfter();
     if (!mounted) return;
     final go = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          icon: const Icon(Icons.headphones_rounded),
-          title: Text(l.findInAudiobook),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(l.findInAudiobookIntroBody),
-              const SizedBox(height: 16),
-              Text(l.findInAudiobookAfterLabel,
-                  style: Theme.of(ctx).textTheme.labelMedium?.copyWith(
-                      color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 8),
-              SegmentedButton<bool>(
-                segments: [
-                  ButtonSegment(value: false, label: Text(l.findInAudiobookStay)),
-                  ButtonSegment(value: true, label: Text(l.findInAudiobookGoPlayer)),
-                ],
-                selected: {goToPlayer},
-                showSelectedIcon: false,
-                onSelectionChanged: (sel) =>
-                    setDialogState(() => goToPlayer = sel.first),
+        builder: (ctx, setDialogState) {
+          Widget option(String value, String label) => RadioListTile<String>(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text(label),
+                value: value,
+                groupValue: after,
+                onChanged: (v) => setDialogState(() => after = v ?? after),
+              );
+          return AlertDialog(
+            icon: const Icon(Icons.headphones_rounded),
+            title: Text(l.findInAudiobook),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(l.findInAudiobookIntroBody),
+                const SizedBox(height: 16),
+                Text(l.findInAudiobookAfterLabel,
+                    style: Theme.of(ctx).textTheme.labelMedium?.copyWith(
+                        color: Theme.of(ctx).colorScheme.onSurfaceVariant)),
+                const SizedBox(height: 4),
+                option('stay', l.findInAudiobookStay),
+                option('player', l.findInAudiobookGoPlayer),
+                option('readalong', l.readAlong),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(l.cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text(l.findInAudiobook),
               ),
             ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text(l.cancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: Text(l.findInAudiobook),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
     if (go != true || !mounted) return;
-    await PlayerSettings.setFindInAudiobookGoToPlayer(goToPlayer);
+    await PlayerSettings.setFindInAudiobookAfter(after);
     if (!mounted) return;
 
     final status = ValueNotifier<String>(l.findInAudiobookSearching);
@@ -2459,7 +2604,20 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
           icon: Icons.search_off_rounded);
       return;
     }
-    await _startAudioAt(targetTime, goToPlayer: goToPlayer, passageCfi: cfi);
+    await _startAudioAt(targetTime,
+        goToPlayer: after == 'player', passageCfi: cfi);
+    // Third landing: stay in the reader and follow along from the spot the
+    // user highlighted, now that the audio is playing this book. playItem can
+    // resolve a beat before the player state settles - wait for it, or the
+    // toggle would reload the book and lose the found position.
+    if (after == 'readalong' && mounted && !_readAlongOn) {
+      for (var i = 0;
+          i < 20 && AudioPlayerService().currentItemId != widget.itemId;
+          i++) {
+        await Future.delayed(const Duration(milliseconds: 150));
+      }
+      if (mounted) await _toggleReadAlong();
+    }
   }
 
   Future<double?> _locateAudioForSelection(String cfi, String selText) async {
@@ -2835,6 +2993,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
           itemId: widget.itemId,
           startSeconds: probeStart,
           windowSeconds: _probeWindowSeconds,
+          preferAccuracy: false,
         );
       } on TranscriptionException catch (e) {
         // A silent or music-only window transcribes to nothing, and a probe
@@ -3195,6 +3354,595 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
     // numbers into state ourselves.
     _refreshLocationAfterJump();
     _flashHighlight(cfi);
+  }
+
+  /// Load this book into the player and start it, for read along pressed
+  /// while something else (or nothing) is playing - pressing the feature IS
+  /// the intent to hear this book. False when it could not start (offline
+  /// with no API, or the item failed to load).
+  Future<bool> _ensureThisBookPlaying() async {
+    final player = AudioPlayerService();
+    if (player.currentItemId == widget.itemId &&
+        player.currentEpisodeId == null) {
+      if (!player.isPlaying) await player.play();
+      return true;
+    }
+    final api = context.read<AuthProvider>().apiService;
+    final lib = context.read<LibraryProvider>();
+    if (api == null) return false;
+    final fullItem = await api.getLibraryItem(widget.itemId);
+    if (fullItem == null || !mounted) return false;
+    final media = fullItem['media'] as Map<String, dynamic>? ?? {};
+    final metadata = media['metadata'] as Map<String, dynamic>? ?? {};
+    final error = await player.playItem(
+      api: api,
+      itemId: widget.itemId,
+      title: metadata['title'] as String? ?? widget.title,
+      author: metadata['authorName'] as String? ?? '',
+      coverUrl: lib.getCoverUrl(widget.itemId),
+      totalDuration:
+          (media['duration'] is num) ? (media['duration'] as num).toDouble() : 0.0,
+      chapters: (media['chapters'] as List<dynamic>?) ?? [],
+      libraryId: fullItem['libraryId'] as String?,
+    );
+    return error == null;
+  }
+
+  /// Toggle read along (episodes have no ebook). Reuses the live-transcript
+  /// pipeline for lines, so the cache is shared with the player overlay. A
+  /// book that isn't playing yet gets loaded and started - nobody presses
+  /// read along on a book they don't want to hear.
+  Future<void> _toggleReadAlong() async {
+    final l = AppLocalizations.of(context)!;
+    if (_readAlongOn) {
+      _stopReadAlong();
+      return;
+    }
+    final player = AudioPlayerService();
+    if (player.currentItemId != widget.itemId ||
+        player.currentEpisodeId != null) {
+      final ok = await _ensureThisBookPlaying();
+      if (!ok || !mounted) {
+        if (mounted) {
+          showOverlayToast(context, l.readAlongNeedsPlaying,
+              icon: Icons.headphones_rounded);
+        }
+        return;
+      }
+    }
+    if (!await PlayerSettings.getTranscriptionEnabled()) {
+      if (mounted) {
+        showOverlayToast(context, l.transcriptionDisabledHint,
+            icon: Icons.record_voice_over_rounded);
+      }
+      return;
+    }
+    if (!TranscriptionService.instance.canTranscribeBook(widget.itemId)) {
+      if (mounted) {
+        await promptDownloadForTranscription(context,
+            itemId: widget.itemId, title: widget.title);
+      }
+      return;
+    }
+    // Read along turns the pages itself, so the blind can't run at the same
+    // time - one of them has to own the page.
+    if (_autoScroll) {
+      await _epubController?.autoScrollStop();
+      if (mounted) setState(() {
+        _autoScroll = false;
+        _autoScrollPaused = false;
+      });
+    }
+    if (!LyricsService.instance.isOn) {
+      await LyricsService.instance.enableForCurrent();
+      _readAlongStartedPipeline = true;
+    }
+    LyricsService.instance.readerOwns = true;
+    _readAlongColor = LyricsService.instance.readAlongColor;
+    _readAlongMode = LyricsService.instance.readAlongMode;
+    _readAlongLastPos = player.position.inMilliseconds / 1000.0;
+    final wc = _epubController?.webViewController;
+    await wc?.evaluateJavascript(source: readAlongBootstrap(_readAlongColor));
+    await wc?.evaluateJavascript(
+        source: 'window.__absorbRA && __absorbRA.start()');
+    if (mounted) setState(() => _readAlongOn = true);
+    // The first anchor may be behind the page you left the reader on.
+    _readAlongAllowBack = true;
+    _readAlongLastMatch = DateTime.now();
+    _readAlongLost = false;
+    _readAlongSeekAt = null;
+    ScreenWake.keepOn(true);
+    _readAlongTimer?.cancel();
+    // 100ms so a word is never skipped at 2x: the sweep below moves at most
+    // one word per tick, ten words a second.
+    _readAlongTimer = Timer.periodic(
+        const Duration(milliseconds: 100), (_) => _readAlongTick());
+    debugPrint('[ReadAlong] enabled for ${widget.itemId}');
+  }
+
+  /// The same transcript sync adjuster the player overlay has, for tuning
+  /// read along against Bluetooth latency without leaving the reader. Lives
+  /// in the bottom chrome, so it is there whenever the controls are.
+  Widget _readAlongSyncPill(Color fg) {
+    final svc = LyricsService.instance;
+    return AnimatedBuilder(
+      animation: svc,
+      builder: (context, _) {
+        if (_readAlongLost) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: fg.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.hearing_disabled_rounded,
+                    size: 13, color: fg.withValues(alpha: 0.6)),
+                const SizedBox(width: 8),
+                Text(
+                  AppLocalizations.of(context)!.readAlongLost,
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: fg.withValues(alpha: 0.75)),
+                ),
+              ],
+            ),
+          );
+        }
+        final gate = svc.gateProgress;
+        if (gate != null) {
+          return Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: fg.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(
+                    value: gate > 0 ? gate : null,
+                    strokeWidth: 2,
+                    color: fg.withValues(alpha: 0.6),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${AppLocalizations.of(context)!.lyricsListeningAhead} '
+                  '${(gate * 100).round()}%',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: fg.withValues(alpha: 0.75)),
+                ),
+              ],
+            ),
+          );
+        }
+        final ms = svc.offsetMs;
+        final label = ms == 0
+            ? '0'
+            : '${ms > 0 ? '+' : '-'}${(ms.abs() / 1000).toStringAsFixed(2)}s';
+        Widget button(IconData icon, int delta) => GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => svc.nudgeOffset(delta),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                child: Icon(icon, size: 16, color: fg.withValues(alpha: 0.75)),
+              ),
+            );
+        return Container(
+          decoration: BoxDecoration(
+            color: fg.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 10, right: 2),
+                child: Icon(
+                    svc.onBluetooth
+                        ? Icons.bluetooth_rounded
+                        : Icons.volume_up_rounded,
+                    size: 13,
+                    color: fg.withValues(alpha: 0.5)),
+              ),
+              button(Icons.remove_rounded, -50),
+              // Long press to drop back to no offset.
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onLongPress: svc.clearOffset,
+                child: SizedBox(
+                  width: 52,
+                  child: Text(label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: fg.withValues(alpha: 0.75))),
+                ),
+              ),
+              button(Icons.add_rounded, 50),
+              const SizedBox(width: 4),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _stopReadAlong() {
+    _readAlongTimer?.cancel();
+    _readAlongTimer = null;
+    _flushEbookPush();
+    // Runs from dispose() too, when the WebView may already be on its way out.
+    try {
+      _epubController?.webViewController
+          ?.evaluateJavascript(source: 'window.__absorbRA && __absorbRA.stop()')
+          .catchError((_) => null);
+    } catch (_) {}
+    _readAlongLineStart = null;
+    _readAlongPageWords = 0;
+    _readAlongLineWords = 0;
+    _readAlongWordIndex = -1;
+    _readAlongAt = -1;
+    _readAlongAllowBack = false;
+    _readAlongSeekAt = null;
+    _readAlongLastMatch = null;
+    _readAlongLost = false;
+    LyricsService.instance.readerOwns = false;
+    if (!_autoScroll) ScreenWake.keepOn(false);
+    if (_readAlongStartedPipeline) {
+      LyricsService.instance.disable();
+      _readAlongStartedPipeline = false;
+    }
+    if (mounted && _readAlongOn) setState(() => _readAlongOn = false);
+  }
+
+  Future<void> _readAlongTick() async {
+    if (!mounted || !_readAlongOn) return;
+    final player = AudioPlayerService();
+    if (player.currentItemId != widget.itemId) {
+      _stopReadAlong();
+      return;
+    }
+    final svc = LyricsService.instance;
+    // Changing the color or word/sentence tracking in settings applies without
+    // leaving the reader.
+    if (svc.readAlongColor != _readAlongColor) {
+      _readAlongColor = svc.readAlongColor;
+      _epubController?.webViewController?.evaluateJavascript(
+          source: 'window.__absorbRA && '
+              '__absorbRA.setColor("${cssHex(_readAlongColor)}")');
+    }
+    if (svc.readAlongMode != _readAlongMode) {
+      _readAlongMode = svc.readAlongMode;
+      _readAlongLineStart = null;
+    }
+    // Same runway gate as the live transcript: painting before it is banked
+    // means the first stall leaves the page stuck on a stale sentence.
+    if (svc.gateProgress != null) return;
+    final pos = player.position.inMilliseconds / 1000.0;
+    // Same sync offset the player uses, so headphones don't run the reader's
+    // coloring ahead of the voice either.
+    final heard = pos - svc.offsetSeconds;
+    // The overlay shows a line a beat early because that reads like
+    // subtitles; on the page it cuts the last word of every sentence off. A
+    // small lead matched to the word timing, and almost no pre-show, so a
+    // sentence gets heard through before the next one takes over.
+    final line = TranscriptLineStore.instance.lineNear(
+        widget.itemId, heard + 0.15 * player.speed, preShow: 0.15);
+    // A seek re-anchors everything; without one, narration only moves
+    // forward, so an older line surfacing again (overlapping cached lines,
+    // a repeated phrase) must not drag the coloring back up the page.
+    final seeked = (pos - _readAlongLastPos).abs() > 3;
+    _readAlongLastPos = pos;
+    if (seeked) {
+      _readAlongAt = -1;
+      _readAlongLineStart = null;
+      _readAlongPageWords = 0;
+      _readAlongAllowBack = true;
+      _readAlongSeekAt = DateTime.now();
+      _readAlongLastMatch = DateTime.now();
+      _epubController?.webViewController
+          ?.evaluateJavascript(source: 'window.__absorbRA && __absorbRA.clear()')
+          .catchError((_) => null);
+      debugPrint('[ReadAlong] seek to ${pos.toStringAsFixed(1)}s, re-anchoring');
+    }
+    // A scrub is a run of seeks. Wait for the playhead to settle before
+    // relocating, so dragging the slider produces one relocate, not one per
+    // tick.
+    final seekAt = _readAlongSeekAt;
+    if (seekAt != null) {
+      if (DateTime.now().difference(seekAt) < const Duration(milliseconds: 1500)) {
+        return;
+      }
+      _readAlongSeekAt = null;
+    }
+    // Narration that doesn't match the page for a long stretch (an intro,
+    // an ad read, an abridged edition) leaves the last sentence lit forever
+    // otherwise. After 45s of playing with no match, say so and clear it;
+    // locating carries on, and the next hit clears the message.
+    final lastMatch = _readAlongLastMatch;
+    if (!_readAlongLost &&
+        lastMatch != null &&
+        player.isPlaying &&
+        DateTime.now().difference(lastMatch) > const Duration(seconds: 45)) {
+      _readAlongLost = true;
+      _readAlongLineStart = null;
+      _readAlongPageWords = 0;
+      _epubController?.webViewController
+          ?.evaluateJavascript(source: 'window.__absorbRA && __absorbRA.clear()')
+          .catchError((_) => null);
+      debugPrint('[ReadAlong] no match for 45s, marking lost');
+      if (mounted) setState(() {});
+    }
+    // Previews carry guessed timing for text the audio hasn't reached. The
+    // player overlay can dim them; a highlight in the book can't look
+    // tentative, and anchoring on one freezes the never-go-backwards guard
+    // when the real line lands - so read along waits for real coverage.
+    if (line == null || line.approx || line.text.trim().isEmpty) return;
+    if (!seeked &&
+        _readAlongLineStart != null &&
+        line.start < _readAlongLineStart!) {
+      debugPrint('[ReadAlong] skipped a line that goes backwards: '
+          '${line.start.toStringAsFixed(1)}s < '
+          '${_readAlongLineStart!.toStringAsFixed(1)}s');
+      return;
+    }
+    // A following line must not take over while the current sentence is
+    // still being heard - but "heard" means its last word has had its turn,
+    // not that the segment's trailing silence has run out, or every switch
+    // lands a beat late.
+    if (_readAlongLineStart != null &&
+        line.start != _readAlongLineStart &&
+        line.start > _readAlongLineStart! &&
+        heard < _readAlongLineLastWord) {
+      return;
+    }
+    if (line.start != _readAlongLineStart) {
+      if (_readAlongLocating) return;
+      _readAlongLineStart = line.start;
+      _readAlongLineLastWord = line.wordStarts.isNotEmpty
+          ? min(line.end, line.wordStarts.last + 0.35)
+          : line.end - 0.1;
+      _readAlongLineWords = line.words.length;
+      _readAlongLocating = true;
+      try {
+        // A line cached before word timing existed can only be followed whole.
+        await _paintReadAlongLine(line.text.trim(),
+            exact: line.exact,
+            wordMode: svc.readAlongMode == 'word' && line.wordStarts.isNotEmpty);
+      } finally {
+        _readAlongLocating = false;
+      }
+      return;
+    }
+    // Same sentence, later word: a cheap repaint from the cached offsets.
+    if (_readAlongLocating ||
+        _readAlongPageWords == 0 ||
+        svc.readAlongMode != 'word') {
+      return;
+    }
+    final idx = line.wordIndexAt(heard + 0.15 * player.speed);
+    if (idx < 0) return;
+    // Whisper's word count and the page's can differ on a corrected line, so
+    // scale the index across instead of running off the end.
+    final scaled = _readAlongLineWords > 0
+        ? (idx * _readAlongPageWords / _readAlongLineWords).floor()
+        : idx;
+    var wordIndex = scaled.clamp(0, _readAlongPageWords - 1);
+    // Sweep rather than jump: at speed a tick can land several words on, and
+    // the short ones in between would never light up. One word per tick
+    // catches up within a few ticks; a bigger gap snaps.
+    if (_readAlongWordIndex >= 0 &&
+        wordIndex > _readAlongWordIndex + 1 &&
+        wordIndex - _readAlongWordIndex <= 4) {
+      wordIndex = _readAlongWordIndex + 1;
+    }
+    if (wordIndex == _readAlongWordIndex) return;
+    _readAlongWordIndex = wordIndex;
+    final raw = await _epubController?.webViewController?.evaluateJavascript(
+        source: 'window.__absorbRA ? __absorbRA.word($wordIndex) : ""');
+    if (!mounted || !_readAlongOn) return;
+    Map<String, dynamic>? d;
+    if (raw is String && raw.isNotEmpty) {
+      try {
+        d = jsonDecode(raw) as Map<String, dynamic>;
+      } catch (_) {}
+    }
+    // The page turned into a different section and took the anchor with it:
+    // locate the sentence again on the next tick.
+    if (d == null || d['held'] != true) {
+      _readAlongLineStart = null;
+      _readAlongPageWords = 0;
+      _readAlongAt = -1;
+      return;
+    }
+    // The narration has run onto the next page mid-sentence. Turn there now
+    // rather than leaving you staring at a page the voice has left behind -
+    // and, coming the other way, without turning early and stranding the
+    // colouring off-screen until the sentence catches up.
+    _readAlongLastMatch = DateTime.now();
+    if (d['visible'] == false) {
+      final since = DateTime.now().difference(_readAlongOffPageLog);
+      if (since > const Duration(seconds: 2)) {
+        _readAlongOffPageLog = DateTime.now();
+        debugPrint('[ReadAlong] word $wordIndex off page: dir=${d['dir']} '
+            'x=${d['x']} of ${d['w']}');
+      }
+      _readAlongTurn(d['cfi'], d['dir'], why: 'word $wordIndex is off the page');
+    }
+  }
+
+  /// Every read-along page turn goes through here. Narration only moves
+  /// forward, so a turn backwards is refused unless a seek or a fresh start
+  /// re-anchored things - otherwise a sentence found earlier on the page and
+  /// a word on the next page take turns dragging the spread back and forth.
+  void _readAlongTurn(Object? cfi, Object? dir, {required String why}) {
+    if (dir is! num || dir == 0) return;
+    final back = dir < 0;
+    if (back && !_readAlongAllowBack) {
+      debugPrint('[ReadAlong] not turning back: $why');
+      return;
+    }
+    // One turn at a time: judging the next word before the last turn has
+    // landed reads it as still off the page and turns again, and the page
+    // ends up one ahead of the voice. The relocation callback clears this;
+    // a stuck one gives up after 3s.
+    final pending = _readAlongTurnPending;
+    if (pending != null &&
+        DateTime.now().difference(pending) < const Duration(seconds: 3)) {
+      return;
+    }
+    final since = DateTime.now().difference(_readAlongLastTurn);
+    if (since < const Duration(milliseconds: 700)) return;
+    _readAlongLastTurn = DateTime.now();
+    _readAlongTurnPending = DateTime.now();
+    // A forward turn that lands with the voice behind the page was our own
+    // overshoot; one turn back is allowed to correct it.
+    _readAlongAllowBack = !back;
+    // Step a page the way a tap does rather than jumping to a position: the
+    // position jump silently did nothing on some devices, and a target more
+    // than a page away simply takes another step on the next tick.
+    debugPrint('[ReadAlong] turning ${back ? 'back' : 'forward'}: $why');
+    if (back) {
+      _epubController?.prev();
+    } else {
+      _epubController?.next();
+    }
+  }
+
+  /// Find the line's text in the rendered pages and move the follow-coloring
+  /// there, page-turning when the line has moved past the visible page. A
+  /// line that isn't in the rendered sections (chapter boundary) is found via
+  /// the search book when its text is ebook-exact; Whisper-flavored lines
+  /// that don't match are skipped - the next exact line re-anchors.
+  Future<void> _paintReadAlongLine(String needle,
+      {required bool exact, required bool wordMode}) async {
+    final wc = _epubController?.webViewController;
+    if (wc == null) return;
+    final watch = Stopwatch()..start();
+    final res = await wc.callAsyncJavaScript(
+      functionBody: 'return window.__absorbRA ? '
+          '__absorbRA.locate(needle, wordMode, minOffset) : "";',
+      arguments: {
+        'needle': needle,
+        'wordMode': wordMode,
+        'minOffset': _readAlongAt,
+      },
+    );
+    final raw = res?.value;
+    if (!mounted || !_readAlongOn) return;
+    Map<String, dynamic>? d;
+    if (raw is String && raw.isNotEmpty) {
+      try {
+        d = jsonDecode(raw) as Map<String, dynamic>;
+      } catch (_) {}
+    }
+    final head = needle.length > 50 ? '${needle.substring(0, 50)}...' : needle;
+    if (d != null && d['found'] == true) {
+      _readAlongMissSince = null;
+      _readAlongStepped = false;
+      _readAlongLastMatch = DateTime.now();
+      if (_readAlongLost) {
+        _readAlongLost = false;
+        if (mounted) setState(() {});
+      }
+      _readAlongPageWords = (d['words'] as num?)?.toInt() ?? 0;
+      _readAlongWordIndex = wordMode && _readAlongPageWords > 0 ? 0 : -1;
+      _readAlongAt = (d['at'] as num?)?.toInt() ?? -1;
+      // Logs the heard line against the page sentence it landed on, so a
+      // mis-mapping shows up as two different sentences on one line.
+      debugPrint('[ReadAlong] "$head" -> page@$_readAlongAt '
+          'words=$_readAlongPageWords visible=${d['visible']} '
+          '${watch.elapsedMilliseconds}ms | page: "${d['sentence']}"');
+      if (d['visible'] == false) {
+        _readAlongTurn(d['cfi'], d['dir'], why: 'sentence is off the page');
+      }
+      return;
+    }
+    debugPrint('[ReadAlong] "$head" not on the rendered pages '
+        '(${watch.elapsedMilliseconds}ms, exact=$exact)');
+    // Not in the rendered pages: an exact line can be found globally (chapter
+    // crossings land here); a whisper line just waits for the next one.
+    if (!exact) return;
+    // That scan loads every section of the book, which takes seconds and
+    // stalls the page while it runs, and it lands on the section start, not
+    // the sentence. One miss is usually a sentence sitting off the current
+    // page or a page turn still rendering, so it only runs once a sentence
+    // has stayed missing for a couple of seconds, well clear of any turn.
+    final now = DateTime.now();
+    _readAlongMissSince ??= now;
+    // Narration runs forward, and the next sentence not being in the rendered
+    // pages usually means it starts the next section - which is simply the
+    // next page. Step once and look again before paying for a scan.
+    if (!_readAlongStepped) {
+      _readAlongStepped = true;
+      _readAlongTurn(null, 1, why: 'sentence is not on this page, trying the next');
+      return;
+    }
+    final missing = now.difference(_readAlongMissSince!);
+    final sinceTurn = now.difference(_readAlongLastTurn);
+    final since = now.difference(_readAlongLastScan);
+    if (missing < const Duration(seconds: 2) ||
+        sinceTurn < const Duration(seconds: 3) ||
+        since < const Duration(seconds: 10)) {
+      debugPrint('[ReadAlong] holding the whole-book scan '
+          '(missing ${missing.inMilliseconds}ms, turn ${sinceTurn.inSeconds}s ago, '
+          'scan ${since.inSeconds}s ago)');
+      return;
+    }
+    _readAlongLastScan = now;
+    final hres = await wc.callAsyncJavaScript(functionBody: r'''
+      var sb = window.__absorbSearchBook;
+      if (!sb) {
+        sb = ePub();
+        sb.spine.unpack(book.packaging, book.resolve.bind(book), book.canonical.bind(book));
+        window.__absorbSearchBook = sb;
+      }
+      var q = needle.toLowerCase().replace(/\s+/g,' ').trim();
+      var items = (sb.spine && sb.spine.spineItems) ? sb.spine.spineItems : [];
+      var found = '';
+      for (var i = 0; i < items.length; i++) {
+        var item = items[i], text = '';
+        try {
+          await item.load(book.load.bind(book));
+          var d = item.document;
+          text = d ? ((d.body && d.body.textContent) || (d.documentElement && d.documentElement.textContent) || '') : '';
+        } catch(e){}
+        finally { try { item.unload(); } catch(e2){} }
+        await new Promise(function(r) { setTimeout(r, 0); });
+        if (!text) continue;
+        if (text.toLowerCase().replace(/\s+/g,' ').indexOf(q) !== -1) { found = item.href || ''; break; }
+      }
+      return JSON.stringify({href: found});
+    ''', arguments: {'needle': needle});
+    final hraw = hres?.value;
+    if (!mounted || !_readAlongOn || hraw is! String) return;
+    String href = '';
+    try {
+      href = (jsonDecode(hraw) as Map<String, dynamic>)['href'] as String? ?? '';
+    } catch (_) {}
+    if (href.isEmpty) return;
+    // Turn to the section and let the next tick locate and paint through the
+    // normal path.
+    wc.evaluateJavascript(source: 'window.__absorbRA && __absorbRA.clear()');
+    _readAlongPageWords = 0;
+    _readAlongAt = -1;
+    _readAlongAllowBack = true;
+    _readAlongLastTurn = DateTime.now();
+    _readAlongMissSince = null;
+    _epubController?.display(cfi: href);
+    _readAlongLineStart = null;
   }
 
   /// Brief highlight so the user can spot the passage on the page. Strong
@@ -3805,6 +4553,7 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
               },
               onRelocated: (value) {
                 if (!mounted) return;
+                _readAlongTurnPending = null;
                 // Ignore relocations while backgrounded: the recents/resize
                 // re-paginate fires a stray one that would save the wrong page.
                 // Note it so the resume path knows the page needs restoring.
@@ -3956,6 +4705,11 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (_readAlongOn)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Center(child: _readAlongSyncPill(fg)),
+                            ),
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),
                             child: _buildMediaBar(fg, accent),
@@ -3988,6 +4742,15 @@ class EbookReaderViewState extends State<EbookReaderView> with WidgetsBindingObs
                                   onPressed: _openSearchScreen,
                                 ),
                               ),
+                              if (_transcriptionOn)
+                                Expanded(
+                                  child: IconButton(
+                                    icon: Icon(Icons.graphic_eq_rounded,
+                                        color: _readAlongOn ? accent : fg),
+                                    tooltip: AppLocalizations.of(context)!.readAlong,
+                                    onPressed: _toggleReadAlong,
+                                  ),
+                                ),
                               Expanded(
                                 child: IconButton(
                                   icon: Icon(Icons.sticky_note_2_outlined, color: fg),
