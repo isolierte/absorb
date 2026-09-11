@@ -15057,6 +15057,12 @@ abstract class AppLocalizations {
   /// **'Read along color'**
   String get readAlongColor;
 
+  /// Read along pill after 45s of narration that matches nothing on the page
+  ///
+  /// In en, this message translates to:
+  /// **'Can\'t find the narration on the page'**
+  String get readAlongLost;
+
   /// No description provided for @findInEbook.
   ///
   /// In en, this message translates to:

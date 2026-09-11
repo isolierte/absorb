@@ -4896,6 +4896,10 @@
   "readAlongFollowWord": "Word",
   "readAlongFollowSentence": "Sentence",
   "readAlongColor": "Read along color",
+  "readAlongLost": "Can't find the narration on the page",
+  "@readAlongLost": {
+    "description": "Read along pill after 45s of narration that matches nothing on the page"
+  },
   "findInEbook": "Find in ebook",
   "findInEbookSearching": "Finding this spot in the ebook...",
   "findInEbookNotFound": "Couldn't find this spot in the ebook.",

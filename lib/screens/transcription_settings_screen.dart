@@ -9,16 +9,6 @@ import '../widgets/overlay_toast.dart';
 
 /// Colors the spoken words can be painted in. Vivid enough to read on the
 /// light, sepia and dark reader pages alike, and over cover art.
-const _readAlongPalette = [
-  0xFFFFC400,
-  0xFFFF6D00,
-  0xFFFF1744,
-  0xFFFF4081,
-  0xFFD500F9,
-  0xFF2979FF,
-  0xFF00B8D4,
-  0xFF00C853,
-];
 
 /// Advanced > Bookmark transcription settings: opt-in toggle and on-device
 /// Whisper model management (download / pick / delete). Everything here runs
@@ -367,7 +357,7 @@ class _TranscriptionSettingsScreenState
                     spacing: 12,
                     runSpacing: 12,
                     children: [
-                      for (final c in _readAlongPalette)
+                      for (final c in PlayerSettings.readAlongPalette)
                         _colorSwatch(c, cs),
                     ],
                   ),

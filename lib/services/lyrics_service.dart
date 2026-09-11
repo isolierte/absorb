@@ -97,6 +97,18 @@ class LyricsService extends ChangeNotifier {
   bool _reachedEnd = false;
 
   bool get isOn => _on;
+
+  /// True while the ebook reader's read along is driving the transcript.
+  /// The card overlay stays out of the way then - one of them at a time -
+  /// including during the reader's exit animation, before it can disable
+  /// the pipeline it started.
+  bool _readerOwns = false;
+  bool get readerOwns => _readerOwns;
+  set readerOwns(bool v) {
+    if (_readerOwns == v) return;
+    _readerOwns = v;
+    notifyListeners();
+  }
   /// The store key lyrics are currently running for, so card overlays can
   /// render only on the playing item's card.
   String? get activeKey => _key;

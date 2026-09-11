@@ -62,6 +62,18 @@ extension CardScrubberModeBehavior on CardScrubberMode {
 }
 
 class PlayerSettings {
+  /// Swatches offered for the read along and live transcript color.
+  static const List<int> readAlongPalette = [
+  0xFFFFC400,
+  0xFFFF6D00,
+  0xFFFF1744,
+  0xFFFF4081,
+  0xFFD500F9,
+  0xFF2979FF,
+  0xFF00B8D4,
+  0xFF00C853,
+];
+
   /// Notifier that fires when any player setting changes.
   /// Widgets can listen to this instead of polling SharedPreferences.
   static final ChangeNotifier settingsChanged = ChangeNotifier();

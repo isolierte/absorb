@@ -8714,6 +8714,9 @@ class AppLocalizationsEs extends AppLocalizations {
   String get readAlongColor => 'Read along color';
 
   @override
+  String get readAlongLost => 'Can\'t find the narration on the page';
+
+  @override
   String get findInEbook => 'Find in ebook';
 
   @override
